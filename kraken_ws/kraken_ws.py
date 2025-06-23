@@ -57,7 +57,7 @@ class KrakenWebSocket:
             await self.account.connect()
     
     def add_handler(self, event_type: str, handler: Callable):
-        """Add a message handler for a specific data type (e.g., 'book')."""
+        """Add a message handler for a specific data type (e.g., 'book', 'trade')."""
         if event_type not in self.handlers:
             self.handlers[event_type] = []
         self.handlers[event_type].append(handler)
@@ -80,6 +80,21 @@ class KrakenWebSocket:
         self.subscriptions['book'] = subscription
         logger.info(f"Subscribed to order book for pairs: {pairs}, depth: {depth}")
 
+    async def subscribe_trades(self, pairs: List[str], handler: Optional[Callable] = None):
+        """Subscribe to trade data."""
+        if handler:
+            self.add_handler('trade', handler)
+        
+        subscription = {
+            "event": "subscribe",
+            "pair": pairs,
+            "subscription": {"name": "trade"}
+        }
+        
+        await self._send_public_subscription(subscription)
+        self.subscriptions['trade'] = subscription
+        logger.info(f"Subscribed to trades for pairs: {pairs}")
+
     async def _send_public_subscription(self, subscription: Dict):
         """Sends a subscription message to the public WebSocket."""
         if not self.is_connected or not self.public_ws:
@@ -98,12 +113,12 @@ class KrakenWebSocket:
                 return
 
             if isinstance(data, list) and len(data) >= 3:
-                # This is a data message (e.g., ticker, ohlc, book)
+                # This is a data message (e.g., ticker, ohlc, book, trade)
                 channel_info = data[2]
                 
                 # Handle different possible formats for channel_info
                 if isinstance(channel_info, str):
-                    channel_name = channel_info.split('-')[0]  # 'book' from 'book-10'
+                    channel_name = channel_info.split('-')[0]  # 'book' from 'book-10', 'trade' from 'trade'
                 elif isinstance(channel_info, dict) and 'name' in channel_info:
                     channel_name = channel_info['name']
                 else:
