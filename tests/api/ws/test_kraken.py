@@ -23,9 +23,7 @@ def main():
     # Subscribe to market data
     data = markets.get_orderbook('BTC/USD')
 
-    # Place orders (requires authentication)
-    account.add_order('EURQ/USD', 'buy', 'limit', '10', '1') ## Have this return some info about it, including the order id
-
+    account.add_order('EURQ/USD', 'buy', 'limit', '10', '1') 
     account.edit_order(...)
 
     ## etc..
