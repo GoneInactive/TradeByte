@@ -20,3 +20,5 @@ boto3
 pandas
 websockets
 aiohttp
+PyQt6
+qasync
