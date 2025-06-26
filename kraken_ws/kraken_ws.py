@@ -39,6 +39,8 @@ class KrakenWebSocket:
         self.markets = KrakenMarkets() # Assuming this is for processing market data
         
         self._running = False
+
+        self.open = False
         
     async def connect(self, private: bool = False):
         """
