@@ -776,4 +776,126 @@ logger.warning("High memory usage detected")
 logger.error("Failed to place order")
 ```
 
-This comprehensive API reference covers all the major interfaces and functions available in the TradeByte platform. Each section includes detailed parameter descriptions, return values, and practical examples to help you integrate and extend the platform for your specific needs. 
+This comprehensive API reference covers all the major interfaces and functions available in the TradeByte platform. Each section includes detailed parameter descriptions, return values, and practical examples to help you integrate and extend the platform for your specific needs.
+
+# Kraken WebSocket API (kraken_ws)
+
+## Overview
+The `kraken_ws` module provides a robust, asynchronous interface for interacting with Kraken's WebSocket and REST APIs. It is split into three main components:
+- `kraken_ws.py`: The main WebSocket client for public market data and event handling.
+- `account.py`: Handles authenticated trading operations and private WebSocket connections.
+- `markets.py`: Provides public market data utilities, price analysis, and trading tools.
+
+---
+
+## kraken_ws.py
+
+### `KrakenWebSocket`
+A high-level client for Kraken's public WebSocket API. Handles real-time market data streaming, event subscription, and message dispatching. Delegates private trading operations to `KrakenAccount`.
+
+#### Key Methods
+- `__init__(api_key=None, api_secret=None)`: Initializes the client and its components.
+- `connect(private=False)`: Connects to the public WebSocket (and private, if requested).
+- `add_handler(event_type, handler)`: Registers a callback for a specific event type (e.g., 'book', 'trade').
+- `subscribe_book(pairs, depth=10, handler=None)`: Subscribes to order book updates for given pairs.
+- `subscribe_trades(pairs, handler=None)`: Subscribes to trade updates for given pairs.
+- `run()`: Starts the event loop, receiving and dispatching messages.
+- `close()`: Closes all WebSocket connections.
+
+#### Example Usage
+```python
+from kraken_ws.kraken_ws import KrakenWebSocket
+import asyncio
+
+async def print_book(data):
+    print("Order book update:", data)
+
+async def main():
+    ws = KrakenWebSocket()
+    await ws.connect()
+    await ws.subscribe_book(["XBT/USD"], handler=print_book)
+    await ws.run()
+
+asyncio.run(main())
+```
+
+---
+
+## account.py
+
+### `KrakenAccount`
+Manages authenticated trading operations via Kraken's private WebSocket API. Handles order placement, editing, cancellation, and account management.
+
+#### Key Methods
+- `__init__(api_key=None, api_secret=None)`: Loads credentials and prepares the client.
+- `connect()`: Authenticates and establishes the private WebSocket connection.
+- `add_order(pair, type, ordertype, volume, price=None, validate=False, **kwargs)`: Places a new order.
+- `edit_order(txid, volume=None, limit_price=None, **kwargs)`: Edits an existing order.
+- `cancel_order(txid)`: Cancels one or more orders.
+- `cancel_all_orders()`: Cancels all open orders.
+- `close()`: Closes the private WebSocket connection.
+
+#### Example Usage
+```python
+from kraken_ws.account import KrakenAccount
+import asyncio
+
+async def main():
+    account = KrakenAccount(api_key="YOUR_KEY", api_secret="YOUR_SECRET")
+    await account.connect()
+    result = await account.add_order(
+        pair="XBT/USD", type="buy", ordertype="limit", volume="0.01", price="30000"
+    )
+    print(result)
+    await account.close()
+
+asyncio.run(main())
+```
+
+---
+
+## markets.py
+
+### `KrakenMarkets`
+Provides public market data utilities, price analysis, and trading tools using Kraken's REST API.
+
+#### Key Methods
+- `get_server_time()`: Returns server time.
+- `get_assets()`: Returns asset information.
+- `get_asset_pairs()`: Returns tradeable asset pairs.
+- `get_ticker(pair)`: Returns ticker information for a pair.
+- `get_ohlc(pair, interval=1, since=None)`: Returns OHLC data.
+- `get_order_book(pair, count=100)`: Returns order book data.
+- `get_recent_trades(pair, since=None)`: Returns recent trades.
+- `get_bid_ask(pair)`: Returns current bid/ask prices.
+- `get_24h_stats(pair)`: Returns 24h trading statistics.
+- `get_historical_data(pair, interval=1440, days=30)`: Returns historical OHLC data.
+- `calculate_sma(pair, period=20, interval=1440)`: Calculates the simple moving average.
+- `calculate_ema(pair, period=20, interval=1440)`: Calculates the exponential moving average.
+- `calculate_rsi(pair, period=14, interval=1440)`: Calculates the RSI.
+- `get_volatility(pair, period=20, interval=1440)`: Calculates volatility.
+- `find_pair(asset1, asset2)`: Finds a trading pair for two assets.
+- `get_all_pairs()`: Returns all available pairs.
+- `get_popular_pairs()`: Returns a list of popular pairs.
+- `close()`: Closes the HTTP session.
+
+#### Example Usage
+```python
+from kraken_ws.markets import KrakenMarkets
+import asyncio
+
+async def main():
+    markets = KrakenMarkets()
+    ticker = await markets.get_ticker("XBT/USD")
+    print(ticker)
+    await markets.close()
+
+asyncio.run(main())
+```
+
+---
+
+## Notes
+- All classes are designed for asynchronous use with `asyncio`.
+- API keys are required for private trading operations (see `account.py`).
+- For more advanced usage, see the source code and additional examples in the `tests/` directory. 
