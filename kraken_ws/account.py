@@ -171,6 +171,12 @@ class KrakenAccount:
                     future.set_exception(Exception("WebSocket connection lost."))
             self._pending_requests.clear()
 
+    def connected(self):
+        if not self._ws_authenticated or not self._ws_connection:
+            return False
+        
+        return True
+
     async def _send_request(self, payload: Dict, timeout: float = 10.0) -> Dict:
         """Sends a request over the WebSocket and waits for a response."""
         if not self._ws_authenticated or not self._ws_connection:

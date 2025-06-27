@@ -39,8 +39,8 @@ def main():
         sys.exit(2)
 
     console.print(f"Console Mode.", justify="left")
-    console.print(f"⚡ Initializing [bold cyan]{settings['name']}[/bold cyan]", justify="left")
-    console.print(f"🌌 Running cosmic edition [bold purple]v{settings['version']}[/bold purple]\n", justify="left")
+    console.print(f"Initializing [bold cyan]{settings['name']}[/bold cyan]", justify="left")
+    console.print(f"Running cosmic edition [bold purple]v{settings['version']}[/bold purple]\n", justify="left")
     
     console.rule("[bold green]SYSTEM ONLINE[/bold green]", style="bold green")
 
