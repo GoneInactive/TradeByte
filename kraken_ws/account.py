@@ -105,7 +105,7 @@ class KrakenAccount:
     async def connect(self):
         """Establishes and authenticates the WebSocket connection."""
         async with self._connection_lock:
-            if self._ws_connection and self._ws_connection.open:
+            if self._ws_connection:# and self._ws_connection.open:
                 logger.info("WebSocket connection already established.")
                 return
 
@@ -244,7 +244,7 @@ class KrakenAccount:
             except asyncio.CancelledError:
                 pass
         
-        if self._ws_connection and self._ws_connection.open:
+        if self._ws_connection:# and self._ws_connection.open:
             await self._ws_connection.close()
             logger.info("WebSocket connection closed.")
         
