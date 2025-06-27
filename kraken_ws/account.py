@@ -105,7 +105,7 @@ class KrakenAccount:
     async def connect(self):
         """Establishes and authenticates the WebSocket connection."""
         async with self._connection_lock:
-            if self._ws_connection and self._ws_connection.open:
+            if self._ws_connection:# and self._ws_connection.open:
                 logger.info("WebSocket connection already established.")
                 return
 
@@ -170,6 +170,12 @@ class KrakenAccount:
                 if not future.done():
                     future.set_exception(Exception("WebSocket connection lost."))
             self._pending_requests.clear()
+
+    def connected(self):
+        if not self._ws_authenticated or not self._ws_connection:
+            return False
+        
+        return True
 
     async def _send_request(self, payload: Dict, timeout: float = 10.0) -> Dict:
         """Sends a request over the WebSocket and waits for a response."""
@@ -244,7 +250,7 @@ class KrakenAccount:
             except asyncio.CancelledError:
                 pass
         
-        if self._ws_connection and self._ws_connection.open:
+        if self._ws_connection:# and self._ws_connection.open:
             await self._ws_connection.close()
             logger.info("WebSocket connection closed.")
         

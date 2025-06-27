@@ -40,7 +40,6 @@ class KrakenWebSocket:
         
         self._running = False
 
-        self.open = False
         
     async def connect(self, private: bool = False):
         """
@@ -48,7 +47,7 @@ class KrakenWebSocket:
         - Public connection for market data.
         - Private connection is handled by the account object.
         """
-        if not self.public_ws or not self.public_ws.open:
+        if not self.public_ws:# or not self.public_ws.open:
             self.public_ws = await websockets.connect(self.WS_PUBLIC_URL)
             self.is_connected = True
             logger.info("Connected to Kraken public WebSocket for market data.")
@@ -166,7 +165,7 @@ class KrakenWebSocket:
         self._running = False
         
         # Close public connection
-        if self.public_ws and self.public_ws.open:
+        if self.public_ws:# and self.public_ws.open:
             await self.public_ws.close()
             logger.info("Public WebSocket connection closed.")
             
