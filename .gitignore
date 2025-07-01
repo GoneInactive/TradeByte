@@ -59,3 +59,5 @@ sandbox/
 /config
 src/apps/strategies/eurq_mm.py
 /src/apps/strategies
+src/user-applications/notebook/main.ipynb
+/src/user-applications/notebook
