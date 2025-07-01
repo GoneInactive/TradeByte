@@ -70,6 +70,16 @@ class KrakenAccount:
         except yaml.YAMLError as e:
             logger.error(f"Error parsing YAML config: {e}")
             return {}
+    
+    def _get_rest_signature(self, endpoint: str, data: Dict) -> str:
+        """Generates the signature for REST API requests."""
+        postdata = urllib.parse.urlencode(data)
+        encoded = (str(data['nonce']) + postdata).encode()
+        message = endpoint.encode() + hashlib.sha256(encoded).digest()
+        
+        mac = hmac.new(base64.b64decode(self.api_secret), message, hashlib.sha512)
+        sigdigest = base64.b64encode(mac.digest())
+        return sigdigest.decode()
             
     def _get_ws_auth_token_signature(self, data: Dict) -> str:
         """Generates the signature for the WebSocket authentication token."""
@@ -101,6 +111,31 @@ class KrakenAccount:
             raise Exception(f"Failed to get WebSocket token: {result['error']}")
             
         return result['result']['token']
+
+    async def _make_rest_request(self, endpoint: str, data: Optional[Dict] = None) -> Dict:
+        """Makes a REST API request to Kraken."""
+        if not self._session:
+            self._session = aiohttp.ClientSession()
+        
+        if data is None:
+            data = {}
+        
+        data['nonce'] = str(int(1000 * time.time()))
+        
+        headers = {
+            'API-Key': self.api_key,
+            'API-Sign': self._get_rest_signature(endpoint, data)
+        }
+        
+        url = f"{self.API_URL}{endpoint}"
+        
+        async with self._session.post(url, headers=headers, data=data) as response:
+            result = await response.json()
+            
+        if result.get('error'):
+            raise Exception(f"Kraken API Error: {result['error']}")
+            
+        return result
 
     async def connect(self):
         """Establishes and authenticates the WebSocket connection."""
@@ -193,6 +228,19 @@ class KrakenAccount:
         logger.debug(f"WS Sent: {payload}")
         
         return await asyncio.wait_for(future, timeout=timeout)
+
+    # --- Account Information Methods ---
+
+    async def get_balance(self) -> Dict[str, str]:
+        """
+        Retrieves account balance via REST API.
+        
+        Returns:
+            Dict mapping currency codes to balance amounts as strings.
+            Example: {'ZUSD': '1000.0000', 'XXBT': '0.50000000'}
+        """
+        result = await self._make_rest_request(f"/{self.API_VERSION}/private/Balance")
+        return result['result']
 
     # --- Public Trading Methods ---
 
