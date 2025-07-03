@@ -1,5 +1,9 @@
-Command     | Arguments                               | Description  
-------------|-----------------------------------------|-------------------------------------------------------------  
-start       | str: strategy, str: exchange, str: args | Launch a strategy from the src/apps/strategies directory  
-exit, quit  | None                                    | Exit TradeByte  
-help        | int: page                               | Show help page (supports pagination)  
+Command         | Arguments                                 | Description  
+----------------|-------------------------------------------|-------------------------------------------------------------  
+start           | str: strategy, str: exchange, str: args   | Launch a strategy from the src/apps/strategies directory  
+exit, quit      | None                                      | Exit TradeByte  
+help            | int: page                                 | Show help page (supports pagination)
+smart           | str: type, str: pair, float: quantity,    | Place smart market order for certain quantity
+smart (cont.)   | float: threshold (optional)               |
+portfolio_value | None                                      | Calculates portfolio value based on midpoint
+path            | None                                      | Displays current path
