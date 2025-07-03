@@ -8,8 +8,9 @@ rust_client -> rust_kraken_client -> kraken_python_client
 For lowest latency, use rust_kraken_client directly
 """
 class KrakenPythonClient:
-    def __init__(self,asset='XBTUSD'):
+    def __init__(self,asset='XBTUSD',error_message=False):
         self.asset = asset
+        self.error_message = error_message
 
     def test_connection(self):
         try:
@@ -27,7 +28,8 @@ class KrakenPythonClient:
         except TypeError:
             return kraken.get_bid(asset)
         except Exception as e:
-            print(f"KrakenPythonClient.get_bid: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.get_bid: {e}")
             return False
     
     def get_ask(self,asset='XBTUSD',index=0):
@@ -39,7 +41,8 @@ class KrakenPythonClient:
         except TypeError:
             return kraken.get_ask(asset)
         except Exception as e:
-            print(f"KrakenPythonClient.get_ask: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.get_ask: {e}")
             return False
     
     def get_balance(self,asset=None):
@@ -55,7 +58,8 @@ class KrakenPythonClient:
                 # Returns specific balance
                 return kraken.get_balance()[asset]
         except Exception as e:
-            print(f"KrakenPythonClient.get_balance: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.get_balance: {e}")
             return False
 
     def get_spread(self,asset='XBTUSD'):
@@ -65,7 +69,8 @@ class KrakenPythonClient:
         try:
             return kraken.get_spread(asset)
         except Exception as e:
-            print(f"KrakenPythonClient.get_spread: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.get_spread: {e}")
             return False
     
     def add_order(self, asset, side, price, volume):
@@ -79,7 +84,8 @@ class KrakenPythonClient:
                 "description": order_response.description
             }
         except Exception as e:
-            print(f"KrakenPythonClient.add_order: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.add_order: {e}")
             return False
 
     
@@ -150,7 +156,8 @@ class KrakenPythonClient:
                 valid_headers = [h for h in headers if h in df.columns]
                 return df[valid_headers]
         except Exception as e:
-            print(f"KrakenPythonClient.get_open_orders: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.get_open_orders: {e}")
             return False
 
     def get_order_id(self):
@@ -163,14 +170,16 @@ class KrakenPythonClient:
         try:
             return kraken.cancel_order(order_id)
         except Exception as e:
-            print(f"KrakenPythonClient.cancel_order: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.cancel_order: {e}")
             return False
     
     def get_orderbook(self,pair):
         try:
             return kraken.get_orderbook(pair)
         except Exception as e:
-            print(f"KrakenPythonClient.get_orderbook: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.get_orderbook: {e}")
             return False
 
     def edit_order(self, txid, pair, side, price, volume, new_userref=None):
@@ -193,6 +202,7 @@ class KrakenPythonClient:
             order_response = kraken.edit_order(txid, pair, side, price, volume, new_userref)
             return order_response
         except Exception as e:
-            print(f"KrakenPythonClient.edit_order: {e}")
+            if self.error_message:
+                print(f"KrakenPythonClient.edit_order: {e}")
             return False
         

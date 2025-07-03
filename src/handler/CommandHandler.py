@@ -10,9 +10,16 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/data-collector")))
 from kraken_data import KrakenOrderBookCollector
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/portfolio-manager")))
+from metrics import Metrics
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/execution")))
+from execution_trader import SmartTrader
+
 class CommandHandler:
     def __init__(self):
-        pass
+        self.metrics = Metrics()
+        self.smart_execution = SmartTrader()
 
     def start(self, strategy: str, exchange: str, *args, **kwargs):
         """
@@ -76,6 +83,26 @@ class CommandHandler:
                 print(f'!!!COMMAND ERROR!!! {e}')
         elif "path" in cmd:
             print(sys.path)
+
+        elif "portfolio_value" in cmd:
+            ##
+            ##
+            ##
+            self.metrics.print_portfolio_summary()
+
+        elif "buy" in cmd or "sell" in cmd:
+            ##
+            ## struct: smart (side) (pair) (quantity) (threshold -> optional)
+            ##
+            if cmd[0] == "smart":
+                side = cmd[1]
+                pair = cmd[2]
+                qnty = float(cmd[3])
+                try:
+                    threshold = float(cmd[4])
+                except IndexError:
+                    threshold = 10.00
+                self.smart_execution._execute_smart_market_order(side,pair,qnty,threshold)
 
         elif "restart" in cmd:
             self.restart()
