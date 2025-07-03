@@ -90,6 +90,37 @@ class CommandHandler:
             ##
             self.metrics.print_portfolio_summary()
 
+        elif "spread" in cmd:
+            pair = cmd[1]
+            spread = self.smart_execution.get_spread(pair)
+            try:
+                print(f'Spread for {pair}: {spread:.2f} basis points')
+            except Exception as e:
+                print(f'!!! ERROR !!! SmartTrader.get_spread(): {e}')
+        
+        elif "ask" in cmd or "bid" in cmd:
+            pair = cmd[1]
+            if cmd[0] == "ask":
+                ask = self.smart_execution.get_ask(pair)
+                try:
+                    print(f'Ask for {pair}: {ask:.2f}')
+                except Exception as e:
+                    print(f'!!! ERROR !!! SmartTrader.get_ask(): {e}')
+            elif cmd[0] == "bid":
+                bid = self.smart_execution.get_bid(pair)
+                try:
+                    print(f'Bid for {pair}: {bid:.2f}')
+                except Exception as e:
+                    print(f'!!! ERROR !!! SmartTrader.get_bid(): {e}')
+        
+        elif "price" in cmd:
+            pair = cmd[1]
+            price = self.smart_execution.get_price(pair)
+            try:
+                print(f'Price for {pair}: ${price:.2f}')
+            except Exception as e:
+                print(f'!!! ERROR !!! SmartTrader.get_price(): {e}')
+
         elif "buy" in cmd or "sell" in cmd:
             ##
             ## struct: smart (side) (pair) (quantity) (threshold -> optional)

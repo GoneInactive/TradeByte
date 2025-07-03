@@ -135,7 +135,7 @@ class Metrics:
         portfolio = self.get_detailed_portfolio(base_currency)
         
         print(f"\n=== Portfolio Summary ({base_currency}) ===")
-        print(f"Total Portfolio Value: {portfolio['total_value']:.2f} {base_currency}")
+        print(f"Total Portfolio Value: ${portfolio['total_value']:.2f} {base_currency}")
         print("\nHoldings:")
         print("-" * 70)
         

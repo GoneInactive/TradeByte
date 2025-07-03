@@ -43,4 +43,44 @@ class SmartTrader:
 
         except Exception as e:
             print(f'!!! ERROR !!! SmartTrader._execute_smart_market_order(): {e}')
+
+    def get_bid_ask(self, pair: str):
+        try:
+            ask = self.client.get_ask(pair)
+            bid = self.client.get_bid(pair)
+            return ask, bid
+        except Exception as e:
+            print(f'!!! ERROR !!! SmartTrader.get_bid_ask(): {e}')
+            return None, None
+    
+    def get_spread(self, pair: str):
+        try:
+            ask, bid = self.get_bid_ask(pair)
+            return ((ask/bid)-1)*10000
+        except Exception as e:
+            print(f'!!! ERROR !!! SmartTrader.get_spread(): {e}')
+            return None
         
+    def get_price(self, pair: str):
+        try:
+            ask, bid = self.get_bid_ask(pair)
+            return (ask+bid)/2
+        except Exception as e:
+            print(f'!!! ERROR !!! SmartTrader.get_price(): {e}')
+            return None
+        
+    def get_ask(self, pair: str):
+        try:
+            ask, bid = self.get_bid_ask(pair)
+            return ask
+        except Exception as e:
+            print(f'!!! ERROR !!! SmartTrader.get_ask(): {e}')
+            return None
+        
+    def get_bid(self, pair: str):
+        try:
+            ask, bid = self.get_bid_ask(pair)
+            return bid
+        except Exception as e:
+            print(f'!!! ERROR !!! SmartTrader.get_bid(): {e}')
+            return None
