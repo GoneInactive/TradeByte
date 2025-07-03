@@ -1,4 +1,4 @@
 program:
   name: "TradeByte"
-  version: "1.4.2 -DEVELOPMENT"
+  version: "1.4.0 -DEVELOPMENT"
   debug: false
