@@ -48,7 +48,12 @@ def main():
 
     while True:
         print('')
-        handle.handle(input('TradeByte > '))
+        try:
+            handle.handle(input('TradeByte > '))
+        except KeyboardInterrupt:
+            handle.handle(input('TradeByte > '))
+        except Exception as e:
+            print(f'Error occured during command handling: {e}')
 
 if __name__ == "__main__":
     main()
