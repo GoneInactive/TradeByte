@@ -1,0 +1,12 @@
+[
+    {
+        "sub-account": 1,
+        "nickname": "EURO TRADER",
+        "balances": {
+            "ZUSD": 302.30,
+            "EURQ": 22.14
+        },
+        "created_date": "2023-01-01",
+        "active": true
+    }
+]

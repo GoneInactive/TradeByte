@@ -7,3 +7,7 @@ smart           | str: type, str: pair, float: quantity,    | Place smart market
 smart (cont.)   | float: threshold (optional)               |
 portfolio_value | None                                      | Calculates portfolio value based on midpoint
 path            | None                                      | Displays current path
+create_account  | int: sub_account_id, str: nickname, json: balances, str: created_date, bool: active | Create a new sub-account
+delete_account  | int: sub_account_id                       | Delete a sub-account by ID
+edit_account    | int: sub_account_id, key=value [...]      | Edit existing sub-account details
+transfer_assets | int: from_id, int: to_id, str: currency, float: amount | Transfer assets between sub-accounts
