@@ -154,20 +154,19 @@ class CommandHandler:
             collector.collect_continuous()
         
         elif "create_account" in cmd:
-            if len(cmd) < 6:
-                print("Usage: create_account <sub_account_id> <nickname> <balances_json> <created_date> <active_bool>")
+            if len(cmd) < 5:
+                print("Usage: create_account <sub_account_id> <nickname> <created_date> <active_bool>")
                 return
             try:
                 sub_account_id = int(cmd[1])
                 nickname = cmd[2]
-                balances = json.loads(cmd[3]) # Expecting a JSON string for balances
-                created_date = cmd[4]
-                active = cmd[5].lower() == 'true'
+                created_date = cmd[3]
+                active = cmd[4].lower() == 'true'
                 
                 new_account_data = {
                     "sub-account": sub_account_id,
                     "nickname": nickname,
-                    "balances": balances,
+                    "balances": {},
                     "created_date": created_date,
                     "active": active
                 }
