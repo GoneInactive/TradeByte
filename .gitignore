@@ -61,3 +61,7 @@ src/apps/strategies/eurq_mm.py
 /src/apps/strategies
 src/user-applications/notebook/main.ipynb
 /src/user-applications/notebook
+
+# Sub-account data
+#src/apps/sub-accounts/data/accounts/
+#src/apps/sub-accounts/data/trades/
