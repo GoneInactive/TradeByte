@@ -195,7 +195,7 @@ class SubAccount:
         # USD pairs for common assets
         usd_pairs = {
             'ZUSD': 'ZUSDUSD',  # USD to USD = 1:1
-            'ZEUR': 'ZEURUSD',  # EUR to USD
+            'ZEUR': 'EURUSD',  # EUR to USD
             'XXBT': 'XXBTZUSD', # Bitcoin to USD
             'XETH': 'XETHZUSD', # Ethereum to USD
             'ADA': 'ADAUSD',    # Cardano to USD

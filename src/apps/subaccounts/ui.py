@@ -574,7 +574,6 @@ class SubAccountUI:
                 filepath = account_edit.create_account()
                 if filepath:
                     messagebox.showinfo("Success", f"Account created successfully!\nSaved to: {filepath}")
-                    self.load_accounts()
                     dialog.destroy()
                 else:
                     messagebox.showerror("Error", "Failed to create account")
@@ -594,7 +593,6 @@ class SubAccountUI:
             account_edit = AccountEdit(self.selected_account_id)
             if account_edit.delete_account():
                 messagebox.showinfo("Success", "Account deleted successfully")
-                self.load_accounts()
                 self.selected_account_id = None
             else:
                 messagebox.showerror("Error", "Failed to delete account")
@@ -703,7 +701,6 @@ class SubAccountUI:
                 account_edit = AccountEdit(self.selected_account_id)
                 if account_edit.edit_account_balance(account_data['balances']):
                     messagebox.showinfo("Success", f"Balance updated: {asset} = {amount}")
-                    self.load_accounts()
                     self.display_account_details(self.selected_account_id)
                     dialog.destroy()
                 else:
@@ -751,7 +748,6 @@ class SubAccountUI:
             
             if self.sub_account_manager.transfer_funds(from_account, to_account, asset, amount):
                 messagebox.showinfo("Success", f"Transfer executed successfully: {amount} {asset}")
-                self.load_accounts()
                 # Clear form
                 self.from_account_var.set('')
                 self.to_account_var.set('')
@@ -774,7 +770,6 @@ class SubAccountUI:
             
             if self.sub_account_manager.post_trade(side, pair, quantity, price, account_id):
                 messagebox.showinfo("Success", "Trade posted successfully")
-                self.load_accounts()
                 # Clear form
                 self.trade_account_var.set('')
                 self.side_var.set('')
