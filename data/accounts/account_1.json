@@ -1,0 +1,49 @@
+{
+    "account_id": 1,
+    "nick_name": "EURQ_USD",
+    "balance": {
+        "ZUSD": 0.0,
+        "ZEUR": 0.0
+    },
+    "created_date": "2025-07-16",
+    "active": true,
+    "balances": {
+        "ZUSD": -48.024405695999995,
+        "EURQ": 69.36887999999999,
+        "/USD": 0.0
+    },
+    "trade_history": [
+        {
+            "timestamp": "2025-07-16 21:36:01.834323",
+            "side": "BUY",
+            "pair": "EURQ/USD",
+            "quantity": 38.64477,
+            "price": 1.1597,
+            "total_value": 44.816339769,
+            "account_id": 1,
+            "base_currency": "EURQ",
+            "quote_currency": "/USD",
+            "balances_after": {
+                "ZUSD": 15.0,
+                "EURQ": 53.64477,
+                "/USD": -44.816339769
+            }
+        },
+        {
+            "timestamp": "2025-07-16 23:23:07.091260",
+            "side": "BUY",
+            "pair": "EURQ/USD",
+            "quantity": 54.36888,
+            "price": 1.1592,
+            "total_value": 63.024405695999995,
+            "account_id": 1,
+            "base_currency": "EURQ",
+            "quote_currency": "ZUSD",
+            "balances_after": {
+                "ZUSD": -48.024405695999995,
+                "EURQ": 69.36887999999999,
+                "/USD": 0.0
+            }
+        }
+    ]
+}

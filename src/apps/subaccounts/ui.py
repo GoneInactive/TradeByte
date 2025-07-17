@@ -3,7 +3,10 @@ from tkinter import ttk, messagebox, simpledialog
 import json
 import os
 from typing import Optional, Dict, List
-from account import SubAccount, AccountEdit
+try:
+    from account import SubAccount, AccountEdit
+except ImportError:
+    from src.apps.subaccounts.account import SubAccount, AccountEdit
 import datetime
 
 class SubAccountUI:
@@ -15,7 +18,7 @@ class SubAccountUI:
         
         # Initialize components
         self.sub_account_manager = SubAccount()
-        self.accounts_dir = os.path.join('src', 'apps', 'sub-accounts', 'data', 'accounts')
+        self.accounts_dir = os.path.join('data', 'accounts')
         
         # Data storage
         self.accounts_data = {}

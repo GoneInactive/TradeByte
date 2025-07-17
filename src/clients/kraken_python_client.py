@@ -1,6 +1,8 @@
 from rust_kraken_client import rust_kraken_client as kraken
 import json
 import pandas as pd
+import requests
+import time
 
 """
 This client is used to interact with the rust kraken API.
@@ -11,6 +13,7 @@ class KrakenPythonClient:
     def __init__(self,asset='XBTUSD',error_message=False):
         self.asset = asset
         self.error_message = error_message
+        self.base_url = "https://api.kraken.com/0/public"
 
     def test_connection(self):
         try:
@@ -88,7 +91,6 @@ class KrakenPythonClient:
                 print(f"KrakenPythonClient.add_order: {e}")
             return False
 
-    
     def get_open_orders(self, asset=None, order_type='open', headers=None):
         """
         Retrieve open orders with optional asset filtering and column selection.
@@ -160,6 +162,85 @@ class KrakenPythonClient:
                 print(f"KrakenPythonClient.get_open_orders: {e}")
             return False
 
+    def get_recent_trades(self, pair, since=None, count=None):
+        """
+        Get recent trades for a trading pair.
+        
+        Args:
+            pair (str): Trading pair (e.g., 'XBTUSD')
+            since (str, optional): Return trades since this trade ID
+            count (int, optional): Maximum number of trades to return (default: 1000)
+            
+        Returns:
+            dict: Dictionary containing:
+                - 'trades': List of trades, each containing [price, volume, time, buy/sell, market/limit, miscellaneous]
+                - 'last': Trade ID to use for subsequent calls to get newer trades
+            bool: False if the operation fails
+        """
+        try:
+            # Prepare parameters
+            params = {'pair': pair}
+            if since is not None:
+                params['since'] = since
+            if count is not None:
+                params['count'] = count
+            
+            # Make request to Kraken API
+            response = requests.get(f"{self.base_url}/Trades", params=params)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Check for API errors
+            if data.get('error'):
+                if self.error_message:
+                    print(f"KrakenPythonClient.get_recent_trades: API Error - {data['error']}")
+                return False
+            
+            result = data.get('result', {})
+            
+            # Extract trades data
+            trades_data = None
+            last_id = None
+            
+            for key, value in result.items():
+                if key == 'last':
+                    last_id = value
+                else:
+                    # The trades are stored under the pair name key
+                    trades_data = value
+            
+            if trades_data is None:
+                if self.error_message:
+                    print(f"KrakenPythonClient.get_recent_trades: No trades data found")
+                return False
+            
+            # Convert trades to more readable format
+            formatted_trades = []
+            for trade in trades_data:
+                formatted_trades.append({
+                    'price': float(trade[0]),
+                    'volume': float(trade[1]),
+                    'time': pd.to_datetime(float(trade[2]), unit='s'),
+                    'side': 'buy' if trade[3] == 'b' else 'sell',
+                    'type': 'market' if trade[4] == 'm' else 'limit',
+                    'miscellaneous': trade[5] if len(trade) > 5 else ''
+                })
+            
+            return {
+                'trades': formatted_trades,
+                'last': last_id
+            }
+            
+        except requests.exceptions.RequestException as e:
+            if self.error_message:
+                print(f"KrakenPythonClient.get_recent_trades: Request Error - {e}")
+            return False
+        except Exception as e:
+            if self.error_message:
+                print(f"KrakenPythonClient.get_recent_trades: {e}")
+            return False
+
     def get_order_id(self):
         pass
 
@@ -205,4 +286,3 @@ class KrakenPythonClient:
             if self.error_message:
                 print(f"KrakenPythonClient.edit_order: {e}")
             return False
-        

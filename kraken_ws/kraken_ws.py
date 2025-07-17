@@ -96,6 +96,35 @@ class KrakenWebSocket:
         self.subscriptions['trade'] = subscription
         logger.info(f"Subscribed to trades for pairs: {pairs}")
 
+    # --- Private Data Subscriptions (delegated to account) ---
+
+    async def subscribe_own_trades(self, 
+                                   snapshot: bool = True, 
+                                   consolidate_taker: bool = True,
+                                   handler: Optional[Callable] = None):
+        """
+        Subscribe to own trades data stream.
+        This is a convenience method that delegates to the account object.
+        
+        Args:
+            snapshot: If True, includes initial snapshot of historical data (last 50 trades)
+            consolidate_taker: If True, fills are consolidated by taker, otherwise all fills are shown
+            handler: Optional callback function to handle incoming trade data
+        """
+        # Ensure the account is connected
+        if not self.account.connected():
+            await self.account.connect()
+        
+        await self.account.subscribe_own_trades(
+            snapshot=snapshot,
+            consolidate_taker=consolidate_taker,
+            handler=handler
+        )
+
+    async def unsubscribe_own_trades(self):
+        """Unsubscribe from own trades data stream."""
+        await self.account.unsubscribe_own_trades()
+
     async def _send_public_subscription(self, subscription: Dict):
         """Sends a subscription message to the public WebSocket."""
         if not self.is_connected or not self.public_ws:

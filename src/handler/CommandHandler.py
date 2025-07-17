@@ -16,15 +16,10 @@ from metrics import Metrics
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/execution")))
 from execution_trader import SmartTrader
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/sub-accounts")))
-from logic import SubAccount # Renamed SubAccountWorker to SubAccount for consistency with user provided snippet
-
 class CommandHandler:
     def __init__(self):
         self.metrics = Metrics()
         self.smart_execution = SmartTrader()
-        self.sub_account_manager = SubAccount() # Instantiate without args as they are optional
 
     def start(self, strategy: str, exchange: str, *args, **kwargs):
         """
@@ -153,99 +148,6 @@ class CommandHandler:
             )
             collector.collect_continuous()
         
-        elif "create_account" in cmd:
-            if len(cmd) < 5:
-                print("Usage: create_account <sub_account_id> <nickname> <created_date> <active_bool>")
-                return
-            try:
-                sub_account_id = int(cmd[1])
-                nickname = cmd[2]
-                created_date = cmd[3]
-                active = cmd[4].lower() == 'true'
-                
-                new_account_data = {
-                    "sub-account": sub_account_id,
-                    "nickname": nickname,
-                    "balances": {},
-                    "created_date": created_date,
-                    "active": active
-                }
-                if self.sub_account_manager.create_account(new_account_data):
-                    print(f"Sub-account {nickname} created successfully.")
-                else:
-                    print(f"Failed to create sub-account {nickname}.")
-            except (ValueError, json.JSONDecodeError) as e:
-                print(f"Error parsing arguments for create_account: {e}")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-
-        elif "delete_account" in cmd:
-            if len(cmd) < 2:
-                print("Usage: delete_account <sub_account_id>")
-                return
-            try:
-                sub_account_id = int(cmd[1])
-                if self.sub_account_manager.delete_account(sub_account_id):
-                    print(f"Sub-account {sub_account_id} deleted successfully.")
-                else:
-                    print(f"Failed to delete sub-account {sub_account_id}. Not found.")
-            except ValueError:
-                print("Error: Sub-account ID must be an integer.")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-
-        elif "edit_account" in cmd:
-            if len(cmd) < 3:
-                print("Usage: edit_account <sub_account_id> <key1>=<value1> <key2>=<value2> ...")
-                return
-            try:
-                sub_account_id = int(cmd[1])
-                updated_data = {}
-                for arg in cmd[2:]:
-                    if '=' in arg:
-                        key, value = arg.split('=', 1)
-                        # Basic type conversion, can be expanded for more complex types
-                        if value.lower() == 'true':
-                            updated_data[key] = True
-                        elif value.lower() == 'false':
-                            updated_data[key] = False
-                        elif value.isdigit():
-                            updated_data[key] = int(value)
-                        elif '.' in value and value.replace('.', '', 1).isdigit():
-                            updated_data[key] = float(value)
-                        else:
-                            updated_data[key] = value
-                    else:
-                        print(f"Warning: Skipping malformed argument '{arg}'. Expected key=value format.")
-                
-                if self.sub_account_manager.edit_account(sub_account_id, updated_data):
-                    print(f"Sub-account {sub_account_id} updated successfully.")
-                else:
-                    print(f"Failed to edit sub-account {sub_account_id}. Not found.")
-            except ValueError:
-                print("Error: Sub-account ID must be an integer.")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-
-        elif "transfer_assets" in cmd:
-            if len(cmd) < 5:
-                print("Usage: transfer_assets <from_sub_account_id> <to_sub_account_id> <currency> <amount>")
-                return
-            try:
-                from_sub_account_id = int(cmd[1])
-                to_sub_account_id = int(cmd[2])
-                currency = cmd[3]
-                amount = float(cmd[4])
-                
-                if self.sub_account_manager.transfer_assets(from_sub_account_id, to_sub_account_id, currency, amount):
-                    print(f"Asset transfer initiated successfully.")
-                else:
-                    print(f"Asset transfer failed.")
-            except ValueError:
-                print("Error: Sub-account IDs and amount must be valid numbers.")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
-
         else:
             print(f'Invalid command: {cmd}')
             

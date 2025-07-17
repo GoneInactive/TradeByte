@@ -24,7 +24,7 @@ class AccountEdit:
         ##
         ## Create the accounts directory if it doesn't exist
         ##
-        accounts_dir = os.path.join('src', 'apps', 'sub-accounts', 'data', 'accounts')
+        accounts_dir = os.path.join('data', 'accounts')
         os.makedirs(accounts_dir, exist_ok=True)
 
         ##
@@ -42,8 +42,8 @@ class AccountEdit:
         if account_id == -1:
             account_id = self.account_id
 
-        # Construct the file path
-        accounts_dir = os.path.join('src', 'apps', 'sub-accounts', 'data', 'accounts')
+        # Construct the file path'src', 'apps', 'sub-accounts', 
+        accounts_dir = os.path.join('data', 'accounts')
         filename = f"account_{account_id}.json"
         filepath = os.path.join(accounts_dir, filename)
         
@@ -64,7 +64,7 @@ class AccountEdit:
             account_id = self.account_id
         
         # Load current account data to preserve all existing information
-        accounts_dir = os.path.join('src', 'apps', 'sub-accounts', 'data', 'accounts')
+        accounts_dir = os.path.join('data', 'accounts')
         filename = f"account_{account_id}.json"
         filepath = os.path.join(accounts_dir, filename)
         
@@ -94,7 +94,7 @@ class AccountEdit:
 class SubAccount:
     def __init__(self, account_id: Optional[int] = None):
         self.account_id = account_id
-        self.accounts_dir = os.path.join('src', 'apps', 'sub-accounts', 'data', 'accounts')
+        self.accounts_dir = os.path.join('data', 'accounts')
         self.client = KrakenPythonClient()
 
     def _load_account_data(self, account_id: int) -> Optional[dict]:
@@ -290,6 +290,12 @@ class SubAccount:
             # Simple parsing - assumes 4-char base currency
             base_currency = pair[:4]
             quote_currency = pair[4:]
+            # Remove leading slash if present
+            if quote_currency.startswith('/'):
+                quote_currency = quote_currency[1:]
+            # Normalize quote currency: if it does not start with 'Z', convert to 'Z' + quote_currency
+            if not quote_currency.startswith('Z'):
+                quote_currency = 'Z' + quote_currency
         else:
             print(f"Invalid trading pair format: {pair}")
             return False
@@ -317,6 +323,9 @@ class SubAccount:
         account_data['balances'] = balances
         
         # Create trade record
+        ##
+        ## Quote currency is '/(CURRENCY)' but needs to 'Z(CURRENCY)'
+        ##
         trade_record = {
             'timestamp': str(datetime.datetime.now()),
             'side': side.upper(),
@@ -360,28 +369,16 @@ class SubAccount:
         """
         try:
             # Create trades directory if it doesn't exist
-            trades_dir = os.path.join('src', 'apps', 'sub-accounts', 'data', 'trades')
+            trades_dir = os.path.join('data', 'trades')
             os.makedirs(trades_dir, exist_ok=True)
             
             # Define trades file path
             trades_filename = f"{account_id}_trades.json"
             trades_filepath = os.path.join(trades_dir, trades_filename)
             
-            # Load existing trades or create new list
-            trades_list = []
-            if os.path.exists(trades_filepath):
-                try:
-                    with open(trades_filepath, 'r') as f:
-                        trades_list = json.load(f)
-                except (json.JSONDecodeError, FileNotFoundError):
-                    trades_list = []
-            
-            # Add new trade to the list
-            trades_list.append(trade_record)
-            
-            # Save updated trades list
-            with open(trades_filepath, 'w') as f:
-                json.dump(trades_list, f, indent=4)
+            # Append the new trade as a JSON line
+            with open(trades_filepath, 'a') as f:
+                f.write(json.dumps(trade_record) + '\n')
             
             return True
             
