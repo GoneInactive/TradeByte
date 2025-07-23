@@ -1,0 +1,23 @@
+{
+    "account_id": 2,
+    "nick_name": "Main",
+    "balance": {
+        "ZUSD": 0.0,
+        "ZEUR": 0.0
+    },
+    "created_date": "2025-07-17",
+    "active": true,
+    "balances": {
+        "ZUSD": 308.59,
+        "USDQ": 177.9922,
+        "TUSD": 160.5896,
+        "EURR": 75.4927,
+        "PYUSD": 84.4329,
+        "LSETH": 0.0182,
+        "ZEUR": 27.71,
+        "USDD": 9.8369,
+        "EURQ": 1.979,
+        "USDG": 1.5163,
+        "DOGE": 6.17
+    }
+}
