@@ -1,0 +1,26 @@
+[
+    {
+        "timestamp": "2025-07-16 21:36:01.834323",
+        "side": "BUY",
+        "pair": "EURQ/USD",
+        "quantity": 38.64477,
+        "price": 1.1597,
+        "total_value": 44.816339769,
+        "account_id": 1,
+        "base_currency": "EURQ",
+        "quote_currency": "/USD",
+        "balances_after": {
+            "ZUSD": 15.0,
+            "EURQ": 53.64477,
+            "/USD": -44.816339769
+        }
+    }
+]{"timestamp": "2025-07-16 23:23:07.091260", "side": "BUY", "pair": "EURQ/USD", "quantity": 54.36888, "price": 1.1592, "total_value": 63.024405695999995, "account_id": 1, "base_currency": "EURQ", "quote_currency": "ZUSD", "balances_after": {"ZUSD": -48.024405695999995, "EURQ": 69.36887999999999, "/USD": 0.0}}
+{"timestamp": "2025-07-16 23:57:55.533176", "side": "SELL", "pair": "EURQ/USD", "quantity": 16.9428, "price": 1.163, "total_value": 19.704476399999997, "account_id": 1, "base_currency": "EURQ", "quote_currency": "ZUSD", "balances_after": {"ZUSD": -28.319929295999998, "EURQ": 52.42607999999999, "/USD": 0.0}}
+{"timestamp": "2025-07-17 03:57:14.998700", "side": "BUY", "pair": "EURQ/USD", "quantity": 8.3412, "price": 1.1553, "total_value": 9.636588360000001, "account_id": 1, "base_currency": "EURQ", "quote_currency": "ZUSD", "balances_after": {"ZUSD": 20.36341164, "EURQ": 13.3412, "/USD": 0.0}}
+{"timestamp": "2025-07-17 04:06:23.196106", "side": "SELL", "pair": "EURQ/USD", "quantity": 38.36923, "price": 1.16, "total_value": 44.5083068, "account_id": 1, "base_currency": "EURQ", "quote_currency": "ZUSD", "balances_after": {"ZUSD": 64.87171844, "EURQ": -25.02803, "/USD": 0.0}}
+{"timestamp": "2025-07-17 08:30:32.669053", "side": "BUY", "pair": "XXBTZUSD", "quantity": 2.0, "price": 2.0, "total_value": 4.0, "account_id": 1, "base_currency": "XXBT", "quote_currency": "ZUSD", "balances_after": {"ZUSD": 60.871718439999995, "EURQ": -25.02803, "/USD": 0.0, "XXBT": 2.0}}
+{"timestamp": 1752880746.3933675, "pair": "EURQ/USD", "side": "buy", "quantity": 2.0051, "price": 1.1609}
+{"timestamp": "2025-07-18 17:19:06.395579", "side": "BUY", "pair": "EURQ/USD", "quantity": 2.0051, "price": 1.1609, "total_value": 2.32772059, "account_id": 1, "base_currency": "EURQ", "quote_currency": "ZUSD", "balances_after": {"ZUSD": 22.67227941, "EURQ": 27.0051, "/USD": 25.0, "XXBT": 0.0}}
+{"timestamp": 1752885568.0527189, "pair": "EURQ/USD", "side": "buy", "quantity": 2.6614, "price": 1.1609}
+{"timestamp": "2025-07-18 18:39:28.054918", "side": "BUY", "pair": "EURQ/USD", "quantity": 2.6614, "price": 1.1609, "total_value": 3.08961926, "account_id": 1, "base_currency": "EURQ", "quote_currency": "ZUSD", "balances_after": {"ZUSD": 19.582660150000002, "EURQ": 29.6665, "/USD": 25.0, "XXBT": 0.0}}

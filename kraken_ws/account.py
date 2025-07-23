@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import json
 import logging
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Callable
 from pathlib import Path
 import yaml
 import websockets
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class KrakenAccount:
     """
     Manages trading operations for a Kraken account using a persistent WebSocket connection.
-    This client is designed for real-time order management.
+    This client is designed for real-time order management and private data streams.
     """
     
     API_URL = "https://api.kraken.com"
@@ -38,6 +38,10 @@ class KrakenAccount:
         self._pending_requests: Dict[int, asyncio.Future] = {}
         self._message_handler_task: Optional[asyncio.Task] = None
         self._connection_lock = asyncio.Lock()
+        
+        # Add handlers for private data streams
+        self._private_handlers: Dict[str, List[Callable]] = {}
+        self._subscriptions: Dict[str, Dict] = {}
 
     @classmethod
     async def create(cls, api_key: Optional[str] = None, api_secret: Optional[str] = None):
@@ -168,6 +172,13 @@ class KrakenAccount:
                     await self._ws_connection.close()
                 raise
 
+    def add_handler(self, event_type: str, handler: Callable):
+        """Add a message handler for a specific private data type (e.g., 'ownTrades')."""
+        if event_type not in self._private_handlers:
+            self._private_handlers[event_type] = []
+        self._private_handlers[event_type].append(handler)
+        logger.info(f"Added handler for private {event_type}")
+
     async def _handle_ws_messages(self):
         """Continuously listens for and processes incoming WebSocket messages."""
         try:
@@ -177,6 +188,7 @@ class KrakenAccount:
                     data = json.loads(message)
                     logger.debug(f"WS Recv: {data}")
 
+                    # Handle subscription responses and trading requests
                     if isinstance(data, dict) and "reqid" in data:
                         reqid = data.get("reqid")
                         if reqid in self._pending_requests:
@@ -185,6 +197,22 @@ class KrakenAccount:
                                 future.set_exception(Exception(f"Kraken API Error: {data.get('errorMessage', 'Unknown error')}"))
                             else:
                                 future.set_result(data)
+                    
+                    # Handle private data streams (ownTrades, openOrders, etc.)
+                    elif isinstance(data, list) and len(data) >= 2:
+                        # Private data format: [data, channel_name, feed_detail]
+                        if len(data) >= 3 and isinstance(data[1], str):
+                            channel_name = data[1]
+                            if channel_name in self._private_handlers:
+                                for handler in self._private_handlers[channel_name]:
+                                    try:
+                                        asyncio.create_task(handler(data))
+                                    except Exception as e:
+                                        logger.error(f"Error in '{channel_name}' handler: {e}")
+                    
+                    # Handle subscription status messages
+                    elif isinstance(data, dict) and data.get("event") == "subscriptionStatus":
+                        logger.info(f"Subscription status: {data}")
                     
                     elif isinstance(data, dict) and data.get("method") == "ping":
                         # Respond to server-initiated pings
@@ -229,6 +257,74 @@ class KrakenAccount:
         
         return await asyncio.wait_for(future, timeout=timeout)
 
+    async def _send_subscription(self, subscription: Dict):
+        """Sends a subscription message to the private WebSocket."""
+        if not self._ws_authenticated or not self._ws_connection:
+            raise ConnectionError("WebSocket is not connected. Call connect() first.")
+        
+        # Don't add token to subscription messages - authentication is handled by the connection
+        await self._ws_connection.send(json.dumps(subscription))
+        logger.debug(f"WS Subscription Sent: {subscription}")
+
+    # --- Private Data Subscriptions ---
+
+    async def subscribe_own_trades(self, 
+                               snapshot: bool = True, 
+                               consolidate_taker: bool = True,
+                               handler: Optional[Callable] = None):
+        """
+        Subscribe to own trades data stream.
+        
+        Args:
+            snapshot: If True, includes initial snapshot of historical data (last 50 trades)
+            consolidate_taker: If True, fills are consolidated by taker, otherwise all fills are shown
+            handler: Optional callback function to handle incoming trade data
+        """
+        if handler:
+            self.add_handler('ownTrades', handler)
+        
+        # Start with minimal subscription format
+        subscription = {
+            "event": "subscribe",
+            "subscription": {
+                "name": "ownTrades",
+                "token": self._auth_token
+            }
+        }
+        
+        # Only add optional parameters if they're not default values
+        if snapshot is not True:
+            subscription["subscription"]["snapshot"] = snapshot
+        if consolidate_taker is not True:
+            subscription["subscription"]["consolidate_taker"] = consolidate_taker
+        
+        await self._ws_connection.send(json.dumps(subscription))
+        logger.debug(f"WS Subscription Sent: {subscription}")
+        logger.debug(f"Snapshot value type: {type(snapshot)}, value: {snapshot}")
+        logger.debug(f"JSON serialized: {json.dumps(subscription)}")
+        
+        self._subscriptions['ownTrades'] = subscription
+        logger.info(f"Subscribed to own trades (snapshot={snapshot}, consolidate_taker={consolidate_taker})")
+
+    async def unsubscribe_own_trades(self):
+        """Unsubscribe from own trades data stream."""
+        if 'ownTrades' not in self._subscriptions:
+            logger.warning("Not subscribed to ownTrades")
+            return
+        
+        unsubscription = {
+            "event": "unsubscribe",
+            "subscription": {
+                "name": "ownTrades",
+                "token": self._auth_token  # Token goes INSIDE the subscription object
+            }
+        }
+        
+        await self._ws_connection.send(json.dumps(unsubscription))
+        logger.debug(f"WS Unsubscription Sent: {unsubscription}")
+        
+        self._subscriptions.pop('ownTrades', None)
+        logger.info("Unsubscribed from own trades")
     # --- Account Information Methods ---
 
     async def get_balance(self) -> Dict[str, str]:

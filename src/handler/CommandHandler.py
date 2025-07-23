@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 from handler.components.start_strategy import StartStrategy
 
@@ -10,9 +11,15 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/data-collector")))
 from kraken_data import KrakenOrderBookCollector
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/portfolio-manager")))
+from metrics import Metrics
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../apps/execution")))
+from execution_trader import SmartTrader
 class CommandHandler:
     def __init__(self):
-        pass
+        self.metrics = Metrics()
+        self.smart_execution = SmartTrader()
 
     def start(self, strategy: str, exchange: str, *args, **kwargs):
         """
@@ -77,6 +84,57 @@ class CommandHandler:
         elif "path" in cmd:
             print(sys.path)
 
+        elif "portfolio_value" in cmd:
+            ##
+            ##
+            ##
+            self.metrics.print_portfolio_summary()
+
+        elif "spread" in cmd:
+            pair = cmd[1]
+            spread = self.smart_execution.get_spread(pair)
+            try:
+                print(f'Spread for {pair}: {spread:.2f} basis points')
+            except Exception as e:
+                print(f'!!! ERROR !!! SmartTrader.get_spread(): {e}')
+        
+        elif "ask" in cmd or "bid" in cmd:
+            pair = cmd[1]
+            if cmd[0] == "ask":
+                ask = self.smart_execution.get_ask(pair)
+                try:
+                    print(f'Ask for {pair}: {ask:.2f}')
+                except Exception as e:
+                    print(f'!!! ERROR !!! SmartTrader.get_ask(): {e}')
+            elif cmd[0] == "bid":
+                bid = self.smart_execution.get_bid(pair)
+                try:
+                    print(f'Bid for {pair}: {bid:.2f}')
+                except Exception as e:
+                    print(f'!!! ERROR !!! SmartTrader.get_bid(): {e}')
+        
+        elif "price" in cmd:
+            pair = cmd[1]
+            price = self.smart_execution.get_price(pair)
+            try:
+                print(f'Price for {pair}: ${price:.2f}')
+            except Exception as e:
+                print(f'!!! ERROR !!! SmartTrader.get_price(): {e}')
+
+        elif "buy" in cmd or "sell" in cmd:
+            ##
+            ## struct: smart (side) (pair) (quantity) (threshold -> optional)
+            ##
+            if cmd[0] == "smart":
+                side = cmd[1]
+                pair = cmd[2]
+                qnty = float(cmd[3])
+                try:
+                    threshold = float(cmd[4])
+                except IndexError:
+                    threshold = 10.00
+                self.smart_execution._execute_smart_market_order(side,pair,qnty,threshold)
+
         elif "restart" in cmd:
             self.restart()
 
@@ -89,6 +147,7 @@ class CommandHandler:
                 bucket_name=bucket_name
             )
             collector.collect_continuous()
+        
         else:
             print(f'Invalid command: {cmd}')
             

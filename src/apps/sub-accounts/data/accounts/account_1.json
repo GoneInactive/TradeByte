@@ -1,0 +1,15 @@
+{
+    "account_id": 1,
+    "nick_name": "EUR_TESTING",
+    "balance": {
+        "ZUSD": 0.0,
+        "ZEUR": 0.0
+    },
+    "created_date": "2025-07-16",
+    "active": true,
+    "balances": {
+        "ZEUR": 0.0,
+        "ZUSD": 15.0,
+        "EURQ": 15.0
+    }
+}

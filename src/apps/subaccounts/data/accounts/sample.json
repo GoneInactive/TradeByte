@@ -1,0 +1,13 @@
+{
+    "account_id": 1,
+    "nick_name": "Testing",
+    "balance": {
+        "ZUSD": 0.0,
+        "ZEUR": 0.0
+    },
+    "created_date": "2025-07-16",
+    "active": true,
+    "balances": {
+        "ADA": -2.0
+    }
+}

@@ -1,5 +1,13 @@
-Command     | Arguments                               | Description  
-------------|-----------------------------------------|-------------------------------------------------------------  
-start       | str: strategy, str: exchange, str: args | Launch a strategy from the src/apps/strategies directory  
-exit, quit  | None                                    | Exit TradeByte  
-help        | int: page                               | Show help page (supports pagination)  
+Command         | Arguments                                 | Description  
+----------------|-------------------------------------------|-------------------------------------------------------------  
+start           | str: strategy, str: exchange, str: args   | Launch a strategy from the src/apps/strategies directory  
+exit, quit      | None                                      | Exit TradeByte  
+help            | int: page                                 | Show help page (supports pagination)
+smart           | str: type, str: pair, float: quantity,    | Place smart market order for certain quantity
+smart (cont.)   | float: threshold (optional)               |
+portfolio_value | None                                      | Calculates portfolio value based on midpoint
+path            | None                                      | Displays current path
+create_account  | int: sub_account_id, str: nickname, str: created_date, bool: active | Create a new sub-account
+delete_account  | int: sub_account_id                       | Delete a sub-account by ID
+edit_account    | int: sub_account_id, key=value [...]      | Edit existing sub-account details
+transfer_assets | int: from_id, int: to_id, str: currency, float: amount | Transfer assets between sub-accounts
