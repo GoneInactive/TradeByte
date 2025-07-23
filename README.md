@@ -207,23 +207,6 @@ Rust handles the Kraken API requests efficiently. When you call functions like `
 
 ---
 
-## Market Making Strategy
-
-The market making strategy (`src/apps/strategies/market_maker.py`) is a sophisticated automated trading system that:
-
-- **Maintains Order Books**: Continuously places and manages buy/sell orders
-- **Dynamic Pricing**: Adjusts prices based on market conditions and reference prices
-- **Risk Management**: Implements position sizing and order limits
-- **Automatic Recovery**: Restarts automatically if connections are lost
-- **Efficient Updates**: Uses order editing when possible to minimize API calls
-
-### Key Features:
-- **Fixed Ladder Size**: 5 orders per side for consistent market making
-- **Order Editing**: Efficiently updates existing orders instead of canceling/replacing
-- **Connection Recovery**: Automatic restart on connection loss
-- **Real-time Updates**: Processes order book updates in real-time
-
----
 
 ## Contributing
 Follow https://opensource.guide/

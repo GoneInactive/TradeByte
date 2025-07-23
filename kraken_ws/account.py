@@ -7,6 +7,7 @@ import time
 import urllib.parse
 import json
 import logging
+import decimal
 from typing import Dict, List, Optional, Any, Union, Callable
 from pathlib import Path
 import yaml
@@ -16,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 class KrakenAccount:
     """
-    Manages trading operations for a Kraken account using a persistent WebSocket connection.
+    Manages trading operations for a Kraken account using WebSocket v2 API.
     This client is designed for real-time order management and private data streams.
     """
     
     API_URL = "https://api.kraken.com"
-    WS_URL = "wss://ws-auth.kraken.com"
+    WS_URL_V2 = "wss://ws-auth.kraken.com/v2"
     API_VERSION = "0"
     
     def __init__(self, api_key: Optional[str] = None, api_secret: Optional[str] = None):
@@ -45,9 +46,9 @@ class KrakenAccount:
 
     @classmethod
     async def create(cls, api_key: Optional[str] = None, api_secret: Optional[str] = None):
-        """Factory method to create and connect a KrakenAccount instance."""
+        """Factory method to create and connect a KrakenAccount instance using v2."""
         account = cls(api_key, api_secret)
-        await account.connect()
+        await account.connect_v2()
         return account
 
     def _load_credentials(self, api_key: Optional[str], api_secret: Optional[str]):
@@ -141,18 +142,18 @@ class KrakenAccount:
             
         return result
 
-    async def connect(self):
-        """Establishes and authenticates the WebSocket connection."""
+    async def connect_v2(self):
+        """Establishes and authenticates the WebSocket v2 connection."""
         async with self._connection_lock:
-            if self._ws_connection:# and self._ws_connection.open:
-                logger.info("WebSocket connection already established.")
+            if self._ws_connection:
+                logger.info("WebSocket v2 connection already established.")
                 return
 
             try:
                 self._auth_token = await self._get_ws_auth_token()
                 
                 self._ws_connection = await websockets.connect(
-                    self.WS_URL,
+                    self.WS_URL_V2,
                     ping_interval=20,
                     ping_timeout=10
                 )
@@ -162,15 +163,20 @@ class KrakenAccount:
                 if self._message_handler_task:
                     self._message_handler_task.cancel()
                     
-                self._message_handler_task = asyncio.create_task(self._handle_ws_messages())
-                logger.info("WebSocket connection established and authenticated.")
+                self._message_handler_task = asyncio.create_task(self._handle_ws_messages_v2())
+                logger.info("WebSocket v2 connection established and authenticated.")
 
             except Exception as e:
-                logger.error(f"Failed to establish WebSocket connection: {e}")
+                logger.error(f"Failed to establish WebSocket v2 connection: {e}")
                 self._ws_authenticated = False
                 if self._ws_connection:
                     await self._ws_connection.close()
                 raise
+
+    # Legacy method for backward compatibility
+    async def connect(self):
+        """Legacy connect method - redirects to v2."""
+        await self.connect_v2()
 
     def add_handler(self, event_type: str, handler: Callable):
         """Add a message handler for a specific private data type (e.g., 'ownTrades')."""
@@ -179,43 +185,44 @@ class KrakenAccount:
         self._private_handlers[event_type].append(handler)
         logger.info(f"Added handler for private {event_type}")
 
-    async def _handle_ws_messages(self):
-        """Continuously listens for and processes incoming WebSocket messages."""
+    async def _handle_ws_messages_v2(self):
+        """Continuously listens for and processes incoming WebSocket v2 messages."""
         try:
-            # Use `async for` to robustly iterate over messages and handle connection closing.
             async for message in self._ws_connection:
                 try:
                     data = json.loads(message)
-                    logger.debug(f"WS Recv: {data}")
+                    logger.debug(f"WS v2 Recv: {data}")
 
-                    # Handle subscription responses and trading requests
-                    if isinstance(data, dict) and "reqid" in data:
-                        reqid = data.get("reqid")
-                        if reqid in self._pending_requests:
-                            future = self._pending_requests.pop(reqid)
-                            if data.get("status") == "error":
-                                future.set_exception(Exception(f"Kraken API Error: {data.get('errorMessage', 'Unknown error')}"))
+                    # Handle method responses (trading requests)
+                    if isinstance(data, dict) and "req_id" in data:
+                        req_id = data.get("req_id")
+                        if req_id in self._pending_requests:
+                            future = self._pending_requests.pop(req_id)
+                            if not data.get("success", False):
+                                error_msg = data.get("error", "Unknown error")
+                                future.set_exception(Exception(f"Kraken API Error: {error_msg}"))
                             else:
                                 future.set_result(data)
                     
-                    # Handle private data streams (ownTrades, openOrders, etc.)
-                    elif isinstance(data, list) and len(data) >= 2:
-                        # Private data format: [data, channel_name, feed_detail]
-                        if len(data) >= 3 and isinstance(data[1], str):
-                            channel_name = data[1]
-                            if channel_name in self._private_handlers:
-                                for handler in self._private_handlers[channel_name]:
-                                    try:
-                                        asyncio.create_task(handler(data))
-                                    except Exception as e:
-                                        logger.error(f"Error in '{channel_name}' handler: {e}")
+                    # Handle private data streams
+                    elif isinstance(data, dict) and "channel" in data and "data" in data:
+                        channel_name = data["channel"]
+                        if channel_name in self._private_handlers:
+                            for handler in self._private_handlers[channel_name]:
+                                try:
+                                    asyncio.create_task(handler(data))
+                                except Exception as e:
+                                    logger.error(f"Error in '{channel_name}' handler: {e}")
                     
-                    # Handle subscription status messages
-                    elif isinstance(data, dict) and data.get("event") == "subscriptionStatus":
-                        logger.info(f"Subscription status: {data}")
+                    # Handle subscription confirmations
+                    elif isinstance(data, dict) and data.get("method") == "subscribe":
+                        if data.get("success"):
+                            logger.info(f"Successfully subscribed: {data}")
+                        else:
+                            logger.error(f"Subscription failed: {data.get('error', 'Unknown error')}")
                     
+                    # Handle ping messages
                     elif isinstance(data, dict) and data.get("method") == "ping":
-                        # Respond to server-initiated pings
                         pong_message = {"method": "pong", "req_id": data.get("req_id")}
                         await self._ws_connection.send(json.dumps(pong_message))
 
@@ -223,9 +230,9 @@ class KrakenAccount:
                     logger.warning(f"Failed to decode WebSocket message: {message}")
         
         except websockets.exceptions.ConnectionClosed:
-            logger.warning("WebSocket connection closed.")
+            logger.warning("WebSocket v2 connection closed.")
         except Exception as e:
-            logger.error(f"Error in WebSocket message handler: {e}", exc_info=True)
+            logger.error(f"Error in WebSocket v2 message handler: {e}", exc_info=True)
         finally:
             self._ws_authenticated = False
             # Clean up any pending requests that will never resolve
@@ -237,94 +244,120 @@ class KrakenAccount:
     def connected(self):
         if not self._ws_authenticated or not self._ws_connection:
             return False
-        
         return True
 
-    async def _send_request(self, payload: Dict, timeout: float = 10.0) -> Dict:
-        """Sends a request over the WebSocket and waits for a response."""
+    async def _send_request_v2(self, payload: Dict, timeout: float = 10.0) -> Dict:
+        """Sends a request over WebSocket v2 and waits for a response."""
         if not self._ws_authenticated or not self._ws_connection:
-            raise ConnectionError("WebSocket is not connected. Call connect() first.")
+            raise ConnectionError("WebSocket is not connected. Call connect_v2() first.")
 
-        reqid = int(time.time() * 1000)
-        payload["reqid"] = reqid
-        payload["token"] = self._auth_token
+        req_id = int(time.time() * 1000)
+        payload["req_id"] = req_id
+        
+        # Add token to params for v2 API
+        if "params" not in payload:
+            payload["params"] = {}
+        payload["params"]["token"] = self._auth_token
 
         future = asyncio.get_running_loop().create_future()
-        self._pending_requests[reqid] = future
+        self._pending_requests[req_id] = future
         
         await self._ws_connection.send(json.dumps(payload))
-        logger.debug(f"WS Sent: {payload}")
+        logger.debug(f"WS v2 Sent: {payload}")
         
         return await asyncio.wait_for(future, timeout=timeout)
 
-    async def _send_subscription(self, subscription: Dict):
-        """Sends a subscription message to the private WebSocket."""
+    async def _send_subscription_v2(self, subscription: Dict):
+        """Sends a subscription message to the private WebSocket v2."""
         if not self._ws_authenticated or not self._ws_connection:
-            raise ConnectionError("WebSocket is not connected. Call connect() first.")
+            raise ConnectionError("WebSocket is not connected. Call connect_v2() first.")
         
-        # Don't add token to subscription messages - authentication is handled by the connection
+        # Add req_id and token
+        req_id = int(time.time() * 1000)
+        subscription["req_id"] = req_id
+        
+        if "params" not in subscription:
+            subscription["params"] = {}
+        subscription["params"]["token"] = self._auth_token
+        
         await self._ws_connection.send(json.dumps(subscription))
-        logger.debug(f"WS Subscription Sent: {subscription}")
+        logger.debug(f"WS v2 Subscription Sent: {subscription}")
 
-    # --- Private Data Subscriptions ---
+    # --- Private Data Subscriptions (v2 format) ---
 
     async def subscribe_own_trades(self, 
-                               snapshot: bool = True, 
-                               consolidate_taker: bool = True,
-                               handler: Optional[Callable] = None):
+                                   snapshot: bool = True, 
+                                   consolidate_taker: bool = True,
+                                   handler: Optional[Callable] = None):
         """
-        Subscribe to own trades data stream.
-        
-        Args:
-            snapshot: If True, includes initial snapshot of historical data (last 50 trades)
-            consolidate_taker: If True, fills are consolidated by taker, otherwise all fills are shown
-            handler: Optional callback function to handle incoming trade data
+        Subscribe to own trades data stream using v2 format.
         """
         if handler:
-            self.add_handler('ownTrades', handler)
+            self.add_handler('executions', handler)  # v2 uses 'executions' channel
         
-        # Start with minimal subscription format
         subscription = {
-            "event": "subscribe",
-            "subscription": {
-                "name": "ownTrades",
-                "token": self._auth_token
+            "method": "subscribe",
+            "params": {
+                "channel": "executions",
+                "snapshot": snapshot,
+                "consolidate_taker": consolidate_taker
             }
         }
         
-        # Only add optional parameters if they're not default values
-        if snapshot is not True:
-            subscription["subscription"]["snapshot"] = snapshot
-        if consolidate_taker is not True:
-            subscription["subscription"]["consolidate_taker"] = consolidate_taker
+        await self._send_subscription_v2(subscription)
+        self._subscriptions['executions'] = subscription
+        logger.info(f"Subscribed to executions (snapshot={snapshot}, consolidate_taker={consolidate_taker})")
+
+    async def subscribe_open_orders(self, handler: Optional[Callable] = None):
+        """Subscribe to open orders data stream using v2 format."""
+        if handler:
+            self.add_handler('orders', handler)  # v2 uses 'orders' channel
         
-        await self._ws_connection.send(json.dumps(subscription))
-        logger.debug(f"WS Subscription Sent: {subscription}")
-        logger.debug(f"Snapshot value type: {type(snapshot)}, value: {snapshot}")
-        logger.debug(f"JSON serialized: {json.dumps(subscription)}")
+        subscription = {
+            "method": "subscribe",
+            "params": {
+                "channel": "orders"
+            }
+        }
         
-        self._subscriptions['ownTrades'] = subscription
-        logger.info(f"Subscribed to own trades (snapshot={snapshot}, consolidate_taker={consolidate_taker})")
+        await self._send_subscription_v2(subscription)
+        self._subscriptions['orders'] = subscription
+        logger.info("Subscribed to orders")
 
     async def unsubscribe_own_trades(self):
-        """Unsubscribe from own trades data stream."""
-        if 'ownTrades' not in self._subscriptions:
-            logger.warning("Not subscribed to ownTrades")
+        """Unsubscribe from own trades data stream using v2 format."""
+        if 'executions' not in self._subscriptions:
+            logger.warning("Not subscribed to executions")
             return
         
         unsubscription = {
-            "event": "unsubscribe",
-            "subscription": {
-                "name": "ownTrades",
-                "token": self._auth_token  # Token goes INSIDE the subscription object
+            "method": "unsubscribe",
+            "params": {
+                "channel": "executions"
             }
         }
         
-        await self._ws_connection.send(json.dumps(unsubscription))
-        logger.debug(f"WS Unsubscription Sent: {unsubscription}")
+        await self._send_subscription_v2(unsubscription)
+        self._subscriptions.pop('executions', None)
+        logger.info("Unsubscribed from executions")
+
+    async def unsubscribe_open_orders(self):
+        """Unsubscribe from open orders data stream using v2 format."""
+        if 'orders' not in self._subscriptions:
+            logger.warning("Not subscribed to orders")
+            return
         
-        self._subscriptions.pop('ownTrades', None)
-        logger.info("Unsubscribed from own trades")
+        unsubscription = {
+            "method": "unsubscribe",
+            "params": {
+                "channel": "orders"
+            }
+        }
+        
+        await self._send_subscription_v2(unsubscription)
+        self._subscriptions.pop('orders', None)
+        logger.info("Unsubscribed from orders")
+
     # --- Account Information Methods ---
 
     async def get_balance(self) -> Dict[str, str]:
@@ -338,52 +371,270 @@ class KrakenAccount:
         result = await self._make_rest_request(f"/{self.API_VERSION}/private/Balance")
         return result['result']
 
-    # --- Public Trading Methods ---
+    # --- Trading Methods (v2 API) ---
+
+    async def add_order_v2(self, symbol: str, side: str, order_type: str, 
+                  order_qty: Union[str, float, decimal.Decimal], 
+                  limit_price: Optional[Union[str, float, decimal.Decimal]] = None,
+                  display_qty: Optional[Union[str, float, decimal.Decimal]] = None, 
+                  validate: bool = False, 
+                  **kwargs) -> Dict:
+        """
+        Places orders using the v2 API format.
+        Supports all order types including iceberg orders.
+        """
+        def format_number(value):
+            """Ensure numeric values are properly formatted as floats for v2 API"""
+            if value is None:
+                return None
+            if isinstance(value, (str, int, float, decimal.Decimal)):
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid numeric value: {value}")
+            return value
+
+        payload = {
+            "method": "add_order",
+            "params": {
+                "order_type": order_type,
+                "side": side,
+                "symbol": symbol,
+                "order_qty": format_number(order_qty),
+                "validate": validate
+            }
+        }
+        
+        if limit_price is not None:
+            payload["params"]["limit_price"] = format_number(limit_price)
+        
+        if display_qty is not None:
+            if order_type == "iceberg":
+                # Validate minimum display quantity
+                try:
+                    display_val = float(display_qty)
+                    order_val = float(order_qty)
+                    min_display = order_val / 15.0
+                    if display_val < min_display:
+                        raise ValueError(
+                            f"Display quantity must be at least {min_display} "
+                            f"(1/15 of order quantity)"
+                        )
+                except (ValueError, TypeError) as e:
+                    raise ValueError("Invalid numeric values provided") from e
+            payload["params"]["display_qty"] = format_number(display_qty)
+        
+        payload["params"].update(kwargs)
+        return await self._send_request_v2(payload)
+
+    async def amend_order_v2(self, order_id: Optional[str] = None, 
+                        cl_ord_id: Optional[str] = None,
+                        order_qty: Optional[Union[str, float, decimal.Decimal]] = None,
+                        limit_price: Optional[Union[str, float, decimal.Decimal]] = None,
+                        display_qty: Optional[Union[str, float, decimal.Decimal]] = None,
+                        **kwargs) -> Dict:
+        """
+        Amends an order using v2 API format.
+        """
+        if not order_id and not cl_ord_id:
+            raise ValueError("Either order_id or cl_ord_id must be provided")
+        
+        def format_number(value):
+            """Ensure numeric values are properly formatted as floats for v2 API"""
+            if value is None:
+                return None
+            if isinstance(value, (str, int, float, decimal.Decimal)):
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid numeric value: {value}")
+            return value
+        
+        payload = {
+            "method": "amend_order", 
+            "params": {}
+        }
+        
+        # Set order identifier
+        if order_id:
+            payload["params"]["order_id"] = order_id
+        if cl_ord_id:
+            payload["params"]["cl_ord_id"] = cl_ord_id
+        
+        # Add parameters to modify
+        if order_qty is not None:
+            payload["params"]["order_qty"] = format_number(order_qty)
+        if limit_price is not None:
+            payload["params"]["limit_price"] = format_number(limit_price)
+        if display_qty is not None:
+            payload["params"]["display_qty"] = format_number(display_qty)
+        
+        # Validate display_qty if both order_qty and display_qty are provided
+        if order_qty is not None and display_qty is not None:
+            display_qty_float = float(display_qty)
+            order_qty_float = float(order_qty)
+            min_display_qty = order_qty_float / 15.0
+            if display_qty_float < min_display_qty:
+                raise ValueError(f"Display quantity {display_qty} must be at least {min_display_qty:.8f} (1/15 of order quantity)")
+        
+        # Add any additional parameters
+        payload["params"].update(kwargs)
+        return await self._send_request_v2(payload)
+
+    async def cancel_order_v2(self, order_id: Optional[str] = None, 
+                             cl_ord_id: Optional[str] = None) -> Dict:
+        """Cancel an order using v2 API format."""
+        if not order_id and not cl_ord_id:
+            raise ValueError("Either order_id or cl_ord_id must be provided")
+        
+        payload = {
+            "method": "cancel_order",
+            "params": {}
+        }
+        
+        if order_id:
+            payload["params"]["order_id"] = order_id
+        if cl_ord_id:
+            payload["params"]["cl_ord_id"] = cl_ord_id
+        
+        return await self._send_request_v2(payload)
+
+    async def cancel_all_orders_v2(self) -> Dict:
+        """Cancel all orders using v2 API format."""
+        payload = {
+            "method": "cancel_all_orders",
+            "params": {}
+        }
+        return await self._send_request_v2(payload)
+
+    async def cancel_all_orders_after_v2(self, timeout: int) -> Dict:
+        """Cancel all orders after a timeout using v2 API format."""
+        payload = {
+            "method": "cancel_all_orders_after",
+            "params": {
+                "timeout": timeout
+            }
+        }
+        return await self._send_request_v2(payload)
+
+    # --- Legacy v1 methods for backward compatibility ---
 
     async def add_order(self, pair: str, type: str, ordertype: str, volume: str,
                        price: Optional[str] = None, validate: bool = False, **kwargs) -> Dict:
-        """Places a new order via WebSocket."""
-        payload = {
-            "event": "addOrder",
-            "pair": pair,
-            "type": type,
-            "ordertype": ordertype,
-            "volume": str(volume),
-            "validate": str(validate).lower()
-        }
-        if price:
-            payload["price"] = str(price)
+        """
+        Legacy method for backward compatibility.
+        Converts v1 parameters to v2 format internally.
+        """
+        # Convert v1 parameters to v2 format
+        symbol = pair  # May need symbol mapping
+        side = type  # "buy" or "sell"
+        order_type = ordertype  # "limit", "market", etc.
+        order_qty = volume
+        limit_price = price
         
-        payload.update(kwargs)
-        return await self._send_request(payload)
+        return await self.add_order_v2(
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            order_qty=order_qty,
+            limit_price=limit_price,
+            validate=validate,
+            **kwargs
+        )
 
     async def edit_order(self, txid: str, volume: Optional[str] = None,
-                     limit_price: Optional[str] = None, **kwargs) -> Dict:
-        """Edits an existing order via WebSocket."""
-        payload = {
-            "event": "amendOrder",
-            "txid": txid,
-        }
-        if volume:
-            payload["volume"] = str(volume)
-        if limit_price:
-            payload["limit_price"] = str(limit_price)  # Changed from "price" to "limit_price"
-        
-        payload.update(kwargs)
-        return await self._send_request(payload)
+                        limit_price: Optional[str] = None, **kwargs) -> Dict:
+        """Legacy method - edits an existing order."""
+        return await self.amend_order_v2(
+            order_id=txid,
+            order_qty=volume,
+            limit_price=limit_price,
+            **kwargs
+        )
 
     async def cancel_order(self, txid: Union[str, List[str]]) -> Dict:
-        """Cancels one or more open orders via WebSocket."""
-        payload = {
-            "event": "cancelOrder",
-            "txid": [txid] if isinstance(txid, str) else txid
-        }
-        return await self._send_request(payload)
+        """Legacy method - cancels one or more open orders."""
+        if isinstance(txid, list):
+            # For multiple orders, cancel them one by one
+            results = []
+            for order_id in txid:
+                result = await self.cancel_order_v2(order_id=order_id)
+                results.append(result)
+            return {"results": results}
+        else:
+            return await self.cancel_order_v2(order_id=txid)
 
     async def cancel_all_orders(self) -> Dict:
-        """Cancels all open orders via WebSocket."""
-        payload = {"event": "cancelAll"}
-        return await self._send_request(payload)
+        """Legacy method - cancels all open orders."""
+        return await self.cancel_all_orders_v2()
+
+    # --- Iceberg Order Convenience Methods ---
+
+    async def add_iceberg_order(self, symbol: str, side: str, order_qty: str, 
+                               limit_price: str, display_qty: str, 
+                               validate: bool = False, **kwargs) -> Dict:
+        """Convenience method for placing iceberg orders."""
+        return await self.add_order_v2(
+            symbol=symbol,
+            side=side,
+            order_type="iceberg",
+            order_qty=order_qty,
+            limit_price=limit_price,
+            display_qty=display_qty,
+            validate=validate,
+            **kwargs
+        )
+
+    async def amend_iceberg_order(self, order_id: Optional[str] = None, 
+                                 cl_ord_id: Optional[str] = None,
+                                 order_qty: Optional[str] = None,
+                                 limit_price: Optional[str] = None,
+                                 display_qty: Optional[str] = None,
+                                 **kwargs) -> Dict:
+        """Convenience method for amending iceberg orders."""
+        return await self.amend_order_v2(
+            order_id=order_id,
+            cl_ord_id=cl_ord_id,
+            order_qty=order_qty,
+            limit_price=limit_price,
+            display_qty=display_qty,
+            **kwargs
+        )
+
+    # --- Utility Methods ---
+
+    async def get_open_orders(self) -> Dict:
+        """Get open orders via REST API."""
+        result = await self._make_rest_request(f"/{self.API_VERSION}/private/OpenOrders")
+        return result['result']
+
+    async def get_closed_orders(self) -> Dict:
+        """Get closed orders via REST API."""
+        result = await self._make_rest_request(f"/{self.API_VERSION}/private/ClosedOrders")
+        return result['result']
+
+    async def get_trades_history(self) -> Dict:
+        """Get trades history via REST API."""
+        result = await self._make_rest_request(f"/{self.API_VERSION}/private/TradesHistory")
+        return result['result']
+
+    async def query_orders_info(self, txid: Union[str, List[str]]) -> Dict:
+        """Query orders info via REST API."""
+        if isinstance(txid, list):
+            txid = ','.join(txid)
+        
+        data = {'txid': txid}
+        result = await self._make_rest_request(f"/{self.API_VERSION}/private/QueryOrders", data)
+        return result['result']
+
+    async def query_trades_info(self, txid: Union[str, List[str]]) -> Dict:
+        """Query trades info via REST API."""
+        if isinstance(txid, list):
+            txid = ','.join(txid)
+        
+        data = {'txid': txid}
+        result = await self._make_rest_request(f"/{self.API_VERSION}/private/QueryTrades", data)
+        return result['result']
 
     async def close(self):
         """Closes the WebSocket connection and cleans up resources."""
@@ -394,15 +645,15 @@ class KrakenAccount:
             except asyncio.CancelledError:
                 pass
         
-        if self._ws_connection:# and self._ws_connection.open:
+        if self._ws_connection:
             await self._ws_connection.close()
-            logger.info("WebSocket connection closed.")
+            logger.info("WebSocket v2 connection closed.")
         
         if self._session and not self._session.closed:
             await self._session.close()
     
     async def __aenter__(self):
-        await self.connect()
+        await self.connect_v2()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):

@@ -5,8 +5,9 @@ import os
 from typing import Optional, Dict, List
 try:
     from account import SubAccount, AccountEdit
-except ImportError:
+except:
     from src.apps.subaccounts.account import SubAccount, AccountEdit
+
 import datetime
 
 class SubAccountUI:
