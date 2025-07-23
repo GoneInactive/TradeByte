@@ -12,6 +12,7 @@ class KrakenMarkets:
     """
     Kraken market data and analysis tools.
     Handles public market data, price analysis, and trading utilities.
+    Updated for compatibility with v2 API structure.
     """
     
     API_URL = "https://api.kraken.com"
@@ -186,7 +187,7 @@ class KrakenMarkets:
             logger.error(f"Error getting historical data for {pair}: {e}")
             raise
     
-    # Trading Utilities
+    # Trading Utilities - Updated for v2 compatibility
     async def get_minimum_order_size(self, pair: str) -> float:
         """Get minimum order size for a pair."""
         try:
@@ -247,20 +248,80 @@ class KrakenMarkets:
             logger.error(f"Error getting pair decimals for {pair}: {e}")
             raise
     
-    def format_volume(self, volume: float, pair: str) -> str:
-        """Format volume according to pair specifications."""
+    # Symbol conversion utilities for v2 API
+    def convert_pair_to_symbol(self, pair: str) -> str:
+        """
+        Convert v1 pair format to v2 symbol format.
+        E.g., 'XXBTZUSD' -> 'BTC/USD'
+        """
+        # This is a simplified conversion - you may need more sophisticated logic
+        # depending on your specific pairs
+        symbol_map = {
+            'XXBTZUSD': 'BTC/USD',
+            'XETHZUSD': 'ETH/USD',
+            'ADAUSD': 'ADA/USD',
+            'SOLUSD': 'SOL/USD',
+            'DOTUSD': 'DOT/USD',
+            'LINKUSD': 'LINK/USD',
+            'UNIUSD': 'UNI/USD',
+            'LTCUSD': 'LTC/USD',
+            'BCHUSD': 'BCH/USD',
+            'XRPUSD': 'XRP/USD',
+            'ATOMUSD': 'ATOM/USD',
+            'ALGOUSD': 'ALGO/USD',
+            'MATICUSD': 'MATIC/USD',
+            'AVAXUSD': 'AVAX/USD',
+            'FILUSD': 'FIL/USD'
+        }
+        
+        return symbol_map.get(pair, pair)
+    
+    def convert_symbol_to_pair(self, symbol: str) -> str:
+        """
+        Convert v2 symbol format to v1 pair format.
+        E.g., 'BTC/USD' -> 'XXBTZUSD'
+        """
+        # Reverse mapping
+        pair_map = {
+            'BTC/USD': 'XXBTZUSD',
+            'ETH/USD': 'XETHZUSD',
+            'ADA/USD': 'ADAUSD',
+            'SOL/USD': 'SOLUSD',
+            'DOT/USD': 'DOTUSD',
+            'LINK/USD': 'LINKUSD',
+            'UNI/USD': 'UNIUSD',
+            'LTC/USD': 'LTCUSD',
+            'BCH/USD': 'BCHUSD',
+            'XRP/USD': 'XRPUSD',
+            'ATOM/USD': 'ATOMUSD',
+            'ALGO/USD': 'ALGOUSD',
+            'MATIC/USD': 'MATICUSD',
+            'AVAX/USD': 'AVAXUSD',
+            'FIL/USD': 'FILUSD'
+        }
+        
+        return pair_map.get(symbol, symbol)
+    
+    def format_volume(self, volume: float, symbol: str) -> str:
+        """Format volume according to symbol specifications."""
         try:
-            # This would need lot_decimals from get_lot_decimals
+            # Convert symbol to pair for lookup if needed
+            pair = self.convert_symbol_to_pair(symbol)
+            
+            # Get lot decimals and format accordingly
             # For now, return a reasonable default
             return f"{volume:.8f}".rstrip('0').rstrip('.')
         except Exception as e:
             logger.error(f"Error formatting volume: {e}")
             return str(volume)
     
-    def format_price(self, price: float, pair: str) -> str:
-        """Format price according to pair specifications."""
+    def format_price(self, price: float, symbol: str) -> str:
+        """Format price according to symbol specifications."""
         try:
-            # This would need pair_decimals from get_pair_decimals
+            # Convert symbol to pair for lookup if needed
+            pair = self.convert_symbol_to_pair(symbol)
+            
+            # Get pair decimals and format accordingly
             # For now, return a reasonable default
             return f"{price:.5f}".rstrip('0').rstrip('.')
         except Exception as e:
@@ -398,6 +459,13 @@ class KrakenMarkets:
             logger.error(f"Error finding pair for {asset1}/{asset2}: {e}")
             return None
     
+    async def find_symbol(self, asset1: str, asset2: str) -> Optional[str]:
+        """Find the correct symbol (v2 format) for two assets."""
+        pair = await self.find_pair(asset1, asset2)
+        if pair:
+            return self.convert_pair_to_symbol(pair)
+        return None
+    
     async def get_all_pairs(self) -> List[str]:
         """Get list of all available trading pairs."""
         try:
@@ -408,6 +476,16 @@ class KrakenMarkets:
             
         except Exception as e:
             logger.error(f"Error getting all pairs: {e}")
+            return []
+    
+    async def get_all_symbols(self) -> List[str]:
+        """Get list of all available trading symbols (v2 format)."""
+        try:
+            pairs = await self.get_all_pairs()
+            return [self.convert_pair_to_symbol(pair) for pair in pairs]
+            
+        except Exception as e:
+            logger.error(f"Error getting all symbols: {e}")
             return []
     
     async def get_popular_pairs(self) -> List[str]:
@@ -428,6 +506,185 @@ class KrakenMarkets:
         except Exception as e:
             logger.error(f"Error getting popular pairs: {e}")
             return popular  # Return the list anyway
+    
+    async def get_popular_symbols(self) -> List[str]:
+        """Get list of popular trading symbols (v2 format)."""
+        try:
+            pairs = await self.get_popular_pairs()
+            return [self.convert_pair_to_symbol(pair) for pair in pairs]
+            
+        except Exception as e:
+            logger.error(f"Error getting popular symbols: {e}")
+            return []
+    
+    # Order validation helpers for v2 API
+    async def validate_order_params(self, symbol: str, side: str, order_type: str, 
+                                   order_qty: str, limit_price: Optional[str] = None,
+                                   display_qty: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Validate order parameters for v2 API.
+        Returns validation results and formatted parameters.
+        """
+        try:
+            # Convert symbol to pair for validation
+            pair = self.convert_symbol_to_pair(symbol)
+            
+            # Validate basic parameters
+            validation_result = {
+                "valid": True,
+                "errors": [],
+                "warnings": [],
+                "formatted_params": {}
+            }
+            
+            # Validate side
+            if side.lower() not in ['buy', 'sell']:
+                validation_result["valid"] = False
+                validation_result["errors"].append(f"Invalid side: {side}. Must be 'buy' or 'sell'")
+            
+            # Validate order type
+            valid_order_types = ['limit', 'market', 'stop-loss', 'take-profit', 'iceberg']
+            if order_type.lower() not in valid_order_types:
+                validation_result["valid"] = False
+                validation_result["errors"].append(f"Invalid order_type: {order_type}. Must be one of {valid_order_types}")
+            
+            # Validate quantity
+            try:
+                qty_float = float(order_qty)
+                if qty_float <= 0:
+                    validation_result["valid"] = False
+                    validation_result["errors"].append("Order quantity must be positive")
+                
+                # Check minimum order size
+                try:
+                    min_order_size = await self.get_minimum_order_size(pair)
+                    if qty_float < min_order_size:
+                        validation_result["valid"] = False
+                        validation_result["errors"].append(f"Order quantity {qty_float} below minimum {min_order_size}")
+                except Exception as e:
+                    validation_result["warnings"].append(f"Could not validate minimum order size: {e}")
+                
+            except ValueError:
+                validation_result["valid"] = False
+                validation_result["errors"].append(f"Invalid order quantity: {order_qty}")
+            
+            # Validate limit price for limit orders
+            if order_type.lower() in ['limit', 'iceberg'] and limit_price is None:
+                validation_result["valid"] = False
+                validation_result["errors"].append(f"Limit price required for {order_type} orders")
+            
+            if limit_price is not None:
+                try:
+                    price_float = float(limit_price)
+                    if price_float <= 0:
+                        validation_result["valid"] = False
+                        validation_result["errors"].append("Limit price must be positive")
+                except ValueError:
+                    validation_result["valid"] = False
+                    validation_result["errors"].append(f"Invalid limit price: {limit_price}")
+            
+            # Validate display quantity for iceberg orders
+            if order_type.lower() == 'iceberg':
+                if display_qty is None:
+                    validation_result["valid"] = False
+                    validation_result["errors"].append("Display quantity required for iceberg orders")
+                else:
+                    try:
+                        display_qty_float = float(display_qty)
+                        order_qty_float = float(order_qty)
+                        
+                        if display_qty_float <= 0:
+                            validation_result["valid"] = False
+                            validation_result["errors"].append("Display quantity must be positive")
+                        
+                        if display_qty_float > order_qty_float:
+                            validation_result["valid"] = False
+                            validation_result["errors"].append("Display quantity cannot exceed order quantity")
+                        
+                        # Check minimum display quantity (1/15 of order quantity)
+                        min_display_qty = order_qty_float / 15
+                        if display_qty_float < min_display_qty:
+                            validation_result["valid"] = False
+                            validation_result["errors"].append(f"Display quantity {display_qty_float} must be at least {min_display_qty:.8f} (1/15 of order quantity)")
+                        
+                    except ValueError:
+                        validation_result["valid"] = False
+                        validation_result["errors"].append(f"Invalid display quantity: {display_qty}")
+            
+            # Format parameters
+            validation_result["formatted_params"] = {
+                "symbol": symbol,
+                "side": side.lower(),
+                "order_type": order_type.lower(),
+                "order_qty": order_qty
+            }
+            
+            if limit_price is not None:
+                validation_result["formatted_params"]["limit_price"] = limit_price
+            
+            if display_qty is not None:
+                validation_result["formatted_params"]["display_qty"] = display_qty
+            
+            return validation_result
+            
+        except Exception as e:
+            logger.error(f"Error validating order parameters: {e}")
+            return {
+                "valid": False,
+                "errors": [f"Validation error: {e}"],
+                "warnings": [],
+                "formatted_params": {}
+            }
+    
+    async def get_order_book_summary(self, symbol: str, depth: int = 5) -> Dict[str, Any]:
+        """
+        Get a summarized view of the order book for a symbol.
+        """
+        try:
+            # Convert symbol to pair for API call
+            pair = self.convert_symbol_to_pair(symbol)
+            order_book = await self.get_order_book(pair, depth * 2)  # Get more data
+            
+            pair_data = list(order_book.values())[0]
+            
+            # Process bids (buy orders) - highest prices first
+            bids = []
+            for bid in pair_data['bids'][:depth]:
+                bids.append({
+                    'price': float(bid[0]),
+                    'volume': float(bid[1]),
+                    'timestamp': int(bid[2])
+                })
+            
+            # Process asks (sell orders) - lowest prices first  
+            asks = []
+            for ask in pair_data['asks'][:depth]:
+                asks.append({
+                    'price': float(ask[0]),
+                    'volume': float(ask[1]),
+                    'timestamp': int(ask[2])
+                })
+            
+            # Calculate spread
+            best_bid = bids[0]['price'] if bids else 0
+            best_ask = asks[0]['price'] if asks else 0
+            spread = best_ask - best_bid if best_bid and best_ask else 0
+            spread_pct = (spread / best_ask * 100) if best_ask else 0
+            
+            return {
+                'symbol': symbol,
+                'bids': bids,
+                'asks': asks,
+                'best_bid': best_bid,
+                'best_ask': best_ask,
+                'spread': spread,
+                'spread_percentage': spread_pct,
+                'timestamp': int(time.time())
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting order book summary for {symbol}: {e}")
+            raise
     
     async def close(self):
         """Close the aiohttp session."""
