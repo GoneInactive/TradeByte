@@ -552,17 +552,22 @@ class KrakenAccount:
             **kwargs
         )
 
-    async def cancel_order(self, txid: Union[str, List[str]]) -> Dict:
-        """Legacy method - cancels one or more open orders."""
-        if isinstance(txid, list):
-            # For multiple orders, cancel them one by one
-            results = []
-            for order_id in txid:
-                result = await self.cancel_order_v2(order_id=order_id)
-                results.append(result)
-            return {"results": results}
-        else:
-            return await self.cancel_order_v2(order_id=txid)
+    # In your KrakenPythonClient class
+    async def cancel_order(self, order_id):
+        """
+        Async version of cancel_order that makes the HTTP request
+        """
+        try:
+            # Use aiohttp or similar async HTTP client here
+            async with self.session.post(
+                f"{self.base_url}/cancel_order",
+                json={"txid": order_id},
+                headers=self._get_auth_headers()
+            ) as response:
+                return await response.json()
+        except Exception as e:
+            print(f"Error canceling order {order_id}: {e}")
+            return {"status": "error", "errorMessage": str(e)}
 
     async def cancel_all_orders(self) -> Dict:
         """Legacy method - cancels all open orders."""
