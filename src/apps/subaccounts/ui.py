@@ -6,8 +6,10 @@ from typing import Optional, Dict, List
 try:
     from account import SubAccount, AccountEdit
 except:
-    from src.apps.subaccounts.account import SubAccount, AccountEdit
-
+    try:
+        from src.apps.subaccounts.account import SubAccount, AccountEdit
+    except Exception as e:
+        print(f"C.Error: {e}")
 import datetime
 
 class SubAccountUI:
