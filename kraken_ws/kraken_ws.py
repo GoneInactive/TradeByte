@@ -150,7 +150,7 @@ class KrakenWebSocket:
             await self.account.connect_v2()
         
         await self.account.subscribe_own_trades(
-            snapshot=snapshot,
+            snap_trades=snapshot,
             consolidate_taker=consolidate_taker,
             handler=handler
         )
@@ -169,6 +169,109 @@ class KrakenWebSocket:
     async def unsubscribe_open_orders(self):
         """Unsubscribe from open orders data stream."""
         await self.account.unsubscribe_open_orders()
+
+    # --- Cancel All Orders After (Dead Man's Switch) Methods ---
+
+    async def set_cancel_all_orders_after(self, timeout: int) -> Dict:
+        """
+        Set up a "Dead Man's Switch" that will cancel all orders after the specified timeout.
+        This must be called periodically to reset the timer and prevent cancellation.
+        
+        Args:
+            timeout: Duration in seconds to set/extend the timer (max 86400 seconds).
+                    Set to 0 to disable the mechanism.
+        
+        Returns:
+            Response from the server with currentTime and triggerTime.
+        """
+        if not self.account.connected():
+            await self.account.connect_v2()
+        
+        return await self.account.set_cancel_all_orders_after(timeout)
+
+    async def enable_cancel_on_disconnect(self, timeout: int = 60) -> Dict:
+        """
+        Enable the "Dead Man's Switch" mechanism with the specified timeout.
+        
+        Args:
+            timeout: Duration in seconds (recommended: 60). Must be > 0.
+        
+        Returns:
+            Response from the server.
+        """
+        if not self.account.connected():
+            await self.account.connect_v2()
+        
+        return await self.account.enable_cancel_on_disconnect(timeout)
+
+    async def disable_cancel_on_disconnect(self) -> Dict:
+        """
+        Disable the "Dead Man's Switch" mechanism.
+        
+        Returns:
+            Response from the server.
+        """
+        if not self.account.connected():
+            await self.account.connect_v2()
+        
+        return await self.account.disable_cancel_on_disconnect()
+
+    async def reset_cancel_timer(self, timeout: int = 60) -> Dict:
+        """
+        Reset the cancel timer to prevent order cancellation.
+        Should be called periodically (every 15-30 seconds recommended).
+        
+        Args:
+            timeout: Duration in seconds to reset the timer to.
+        
+        Returns:
+            Response from the server.
+        """
+        if not self.account.connected():
+            await self.account.connect_v2()
+        
+        return await self.account.reset_cancel_timer(timeout)
+
+    async def get_cancel_on_disconnect_status(self) -> Dict:
+        """
+        Get the current cancel on disconnect status.
+        
+        Returns:
+            Dict containing enabled status and timeout (if applicable).
+        """
+        return await self.account.get_cancel_on_disconnect_status()
+
+    async def set_cancel_on_disconnect(self, enabled: bool, timeout: int = 60) -> Dict:
+        """
+        Convenience method to enable or disable the cancel mechanism.
+        
+        Args:
+            enabled: Whether to enable or disable the mechanism
+            timeout: Duration in seconds when enabling (ignored when disabling)
+        
+        Returns:
+            Response from the server.
+        """
+        if not self.account.connected():
+            await self.account.connect_v2()
+        
+        return await self.account.set_cancel_on_disconnect(enabled, timeout)
+
+    async def start_cancel_timer_task(self, timeout: int = 60, reset_interval: int = 30) -> asyncio.Task:
+        """
+        Start a background task that automatically resets the cancel timer.
+        
+        Args:
+            timeout: Duration in seconds for the cancel timer
+            reset_interval: How often to reset the timer (in seconds)
+        
+        Returns:
+            The asyncio Task that can be cancelled to stop the auto-reset
+        """
+        if not self.account.connected():
+            await self.account.connect_v2()
+        
+        return await self.account.start_cancel_timer_task(timeout, reset_interval)
 
     # --- Enhanced Trading Methods (v2 API) ---
 
