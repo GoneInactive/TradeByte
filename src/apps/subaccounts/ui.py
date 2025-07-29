@@ -3,13 +3,17 @@ from tkinter import ttk, messagebox, simpledialog
 import json
 import os
 from typing import Optional, Dict, List
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     from account import SubAccount, AccountEdit
 except:
     try:
         from src.apps.subaccounts.account import SubAccount, AccountEdit
     except Exception as e:
-        print(f"C.Error: {e}")
+        from account import SubAccount, AccountEdit
+        print(f"C.ERROR: {e}")
 import datetime
 
 class SubAccountUI:
@@ -23,16 +27,25 @@ class SubAccountUI:
         self.sub_account_manager = SubAccount()
         self.accounts_dir = os.path.join('data', 'accounts')
         
-        # Data storage
+        # Data storage with caching
         self.accounts_data = {}
         self.selected_account_id = None
+        self.price_cache = {}  # Cache for API prices
+        self.cache_timestamp = 0
+        self.cache_duration = 60  # Cache prices for 60 seconds
+        
+        # Threading for async operations
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.loading_in_progress = False
         
         # Setup styles
         self.setup_styles()
         
         # Create UI components
         self.create_widgets()
-        self.load_accounts()
+        
+        # Load accounts asynchronously
+        self.async_load_accounts()
         
     def setup_styles(self):
         """Configure modern dark theme matching speedy.py"""
@@ -69,7 +82,288 @@ class SubAccountUI:
         # Configure buttons
         style.configure('Action.TButton', font=('Arial', 11, 'bold'))
         style.configure('Primary.TButton', font=('Arial', 11, 'bold'))
+
+    def get_cached_price(self, pair: str) -> Optional[float]:
+        """Get cached price or fetch new one if cache is stale"""
+        current_time = time.time()
         
+        # Check if we have a cached price and it's still valid
+        if (pair in self.price_cache and 
+            current_time - self.cache_timestamp < self.cache_duration):
+            return self.price_cache[pair]
+        
+        # Cache is stale or price not found, return None to trigger batch update
+        return None
+    
+    def batch_update_prices(self, required_pairs: List[str]) -> Dict[str, float]:
+        """Batch update prices for multiple pairs to reduce API calls"""
+        current_time = time.time()
+        
+        # If cache is still valid, return cached prices
+        if current_time - self.cache_timestamp < self.cache_duration:
+            return {pair: self.price_cache.get(pair, 0.0) for pair in required_pairs}
+        
+        new_prices = {}
+        
+        # USD pairs for common assets
+        pair_mappings = {
+            'ZUSD': ('ZUSDUSD', 1.0),  # USD to USD = 1:1
+            'ZEUR': ('EURUSD', None),
+            'XXBT': ('XXBTZUSD', None),
+            'XETH': ('XETHZUSD', None),
+            'ADA': ('ADAUSD', None),
+            'DOT': ('DOTUSD', None),
+            'LINK': ('LINKUSD', None),
+            'LTC': ('LTCUSD', None),
+            'XRP': ('XRPUSD', None)
+        }
+        
+        # Batch API calls for efficiency
+        for asset in required_pairs:
+            try:
+                if asset == 'ZUSD':
+                    new_prices[asset] = 1.0
+                elif asset in pair_mappings:
+                    pair, fixed_price = pair_mappings[asset]
+                    if fixed_price:
+                        new_prices[asset] = fixed_price
+                    else:
+                        # Only make API call if not in cache
+                        try:
+                            ask = self.sub_account_manager.client.get_ask(pair)
+                            bid = self.sub_account_manager.client.get_bid(pair)
+                            if ask and bid:
+                                new_prices[asset] = (ask + bid) / 2
+                            else:
+                                new_prices[asset] = 0.0
+                        except:
+                            new_prices[asset] = 0.0
+                else:
+                    # For unknown assets, use fallback
+                    new_prices[asset] = 0.0
+                    
+            except Exception as e:
+                print(f"Error getting price for {asset}: {e}")
+                new_prices[asset] = 0.0
+        
+        # Update cache
+        self.price_cache.update(new_prices)
+        self.cache_timestamp = current_time
+        
+        return new_prices
+    
+    def calculate_account_value_fast(self, account_data: dict) -> float:
+        """Fast calculation of account value using cached prices"""
+        balances = account_data.get('balances', {})
+        if not balances:
+            return 0.0
+        
+        # Get all required assets
+        required_assets = list(balances.keys())
+        
+        # Batch update prices
+        prices = self.batch_update_prices(required_assets)
+        
+        total_value = 0.0
+        for asset, balance in balances.items():
+            if balance != 0:  # Skip zero balances
+                price = prices.get(asset, 0.0)
+                total_value += balance * price
+        
+        return total_value
+
+    def async_load_accounts(self):
+        """Load accounts asynchronously to prevent UI blocking"""
+        if self.loading_in_progress:
+            return
+            
+        self.loading_in_progress = True
+        self.status_label.config(text="Loading accounts...")
+        
+        def load_task():
+            try:
+                new_accounts_data = {}
+                
+                if not os.path.exists(self.accounts_dir):
+                    return new_accounts_data
+                
+                # Load all account files
+                account_files = [f for f in os.listdir(self.accounts_dir) if f.endswith('.json')]
+                
+                for filename in account_files:
+                    try:
+                        filepath = os.path.join(self.accounts_dir, filename)
+                        with open(filepath, 'r') as f:
+                            account_data = json.load(f)
+                            account_id = account_data.get('account_id')
+                            if account_id:
+                                new_accounts_data[account_id] = account_data
+                    except Exception as e:
+                        print(f"Error loading account {filename}: {e}")
+                
+                return new_accounts_data
+                
+            except Exception as e:
+                print(f"Error in load_task: {e}")
+                return {}
+        
+        def on_complete(future):
+            try:
+                new_accounts_data = future.result()
+                # Update UI in main thread
+                self.root.after(0, self._update_ui_after_load, new_accounts_data)
+            except Exception as e:
+                print(f"Error completing load: {e}")
+                self.root.after(0, lambda: self.status_label.config(text="Error loading accounts"))
+            finally:
+                self.loading_in_progress = False
+        
+        future = self.executor.submit(load_task)
+        future.add_done_callback(on_complete)
+    
+    def _update_ui_after_load(self, new_accounts_data):
+        """Update UI components after accounts are loaded"""
+        self.accounts_data = new_accounts_data
+        
+        # Update account listbox
+        self.account_listbox.delete(0, tk.END)
+        for account_id, account_data in self.accounts_data.items():
+            nickname = account_data.get('nick_name', f'Account {account_id}')
+            self.account_listbox.insert(tk.END, f"{account_id}: {nickname}")
+        
+        # Update combo boxes
+        account_list = [f"{id}: {data.get('nick_name', f'Account {id}')}" 
+                       for id, data in self.accounts_data.items()]
+        self.from_account_combo['values'] = account_list
+        self.to_account_combo['values'] = account_list
+        self.trade_account_combo['values'] = account_list
+        
+        # Update asset dropdown
+        self.update_asset_dropdown()
+        
+        # Update overview asynchronously
+        self.async_update_overview()
+        
+        self.status_label.config(text=f"Loaded {len(self.accounts_data)} accounts")
+    
+    def load_accounts(self):
+        """Public method to reload accounts"""
+        self.async_load_accounts()
+        
+    def update_asset_dropdown(self):
+        """Update the asset dropdown with all available assets from accounts"""
+        common_assets = ['ZUSD', 'ZEUR', 'XXBT', 'XETH', 'ADA', 'DOT', 'LINK', 'LTC', 'XRP']
+        all_assets = set(common_assets)
+        
+        # Add all assets from existing accounts
+        for account_data in self.accounts_data.values():
+            balances = account_data.get('balances', {})
+            all_assets.update(balances.keys())
+        
+        all_assets = sorted(list(all_assets))
+        
+        # Update the asset combo if it exists
+        if hasattr(self, 'asset_combo'):
+            self.asset_combo['values'] = all_assets
+
+    def async_update_overview(self):
+        """Update overview statistics asynchronously"""
+        def calculate_stats():
+            try:
+                total_accounts = len(self.accounts_data)
+                active_accounts = sum(1 for data in self.accounts_data.values() if data.get('active', False))
+                
+                # Get all unique assets for batch price update
+                all_assets = set()
+                for account_data in self.accounts_data.values():
+                    balances = account_data.get('balances', {})
+                    all_assets.update(balances.keys())
+                
+                # Batch update prices for all assets at once
+                if all_assets:
+                    self.batch_update_prices(list(all_assets))
+                
+                # Calculate portfolio stats
+                total_value = 0.0
+                account_values = []
+                largest_account = None
+                largest_value = 0.0
+                last_activity = "No activity"
+                
+                for account_id, account_data in self.accounts_data.items():
+                    account_value = self.calculate_account_value_fast(account_data)
+                    total_value += account_value
+                    account_values.append(account_value)
+                    
+                    if account_value > largest_value:
+                        largest_value = account_value
+                        largest_account = account_data.get('nick_name', f'Account {account_id}')
+                    
+                    # Get last activity
+                    trade_history = account_data.get('trade_history', [])
+                    if trade_history:
+                        last_trade = trade_history[-1]['timestamp']
+                        if last_activity == "No activity" or last_trade > last_activity:
+                            last_activity = last_trade
+                
+                avg_account_value = total_value / total_accounts if total_accounts > 0 else 0.0
+                
+                return {
+                    'total_accounts': total_accounts,
+                    'active_accounts': active_accounts,
+                    'total_value': total_value,
+                    'avg_account_value': avg_account_value,
+                    'largest_account': largest_account,
+                    'last_activity': last_activity,
+                    'account_values': account_values
+                }
+                
+            except Exception as e:
+                print(f"Error calculating stats: {e}")
+                return None
+        
+        def on_stats_complete(future):
+            try:
+                stats = future.result()
+                if stats:
+                    self.root.after(0, self._update_overview_ui, stats)
+            except Exception as e:
+                print(f"Error in stats calculation: {e}")
+        
+        future = self.executor.submit(calculate_stats)
+        future.add_done_callback(on_stats_complete)
+    
+    def _update_overview_ui(self, stats):
+        """Update overview UI with calculated stats"""
+        # Update statistics labels
+        self.total_accounts_label.config(text=f"{stats['total_accounts']}")
+        self.total_value_label.config(text=f"${stats['total_value']:,.2f}")
+        self.active_accounts_label.config(text=f"{stats['active_accounts']}")
+        self.largest_account_label.config(text=f"{stats['largest_account']}" if stats['largest_account'] else "--")
+        self.avg_account_value_label.config(text=f"${stats['avg_account_value']:,.2f}")
+        self.last_activity_label.config(text=f"{stats['last_activity']}")
+        
+        # Update summary table
+        for item in self.summary_tree.get_children():
+            self.summary_tree.delete(item)
+        
+        for i, (account_id, account_data) in enumerate(self.accounts_data.items()):
+            account_value = stats['account_values'][i] if i < len(stats['account_values']) else 0.0
+            
+            # Get last activity
+            trade_history = account_data.get('trade_history', [])
+            last_activity = "No activity"
+            if trade_history:
+                last_activity = trade_history[-1]['timestamp']
+            
+            self.summary_tree.insert('', tk.END, values=(
+                account_id,
+                account_data.get('nick_name', f'Account {account_id}'),
+                'Active' if account_data.get('active', False) else 'Inactive',
+                f"${account_value:,.2f}",
+                last_activity
+            ))
+
     def create_widgets(self):
         """Create all UI widgets with modern dark theme"""
         # Main container
@@ -280,16 +574,8 @@ class SubAccountUI:
         common_assets = ['ZUSD', 'ZEUR', 'XXBT', 'XETH', 'ADA', 'DOT', 'LINK', 'LTC', 'XRP']
         self.asset_var = tk.StringVar()
         
-        # Get all assets from existing accounts for the dropdown
-        all_assets = set(common_assets)
-        for account_data in self.accounts_data.values():
-            balances = account_data.get('balances', {})
-            all_assets.update(balances.keys())
-        
-        all_assets = sorted(list(all_assets))
-        
         self.asset_combo = ttk.Combobox(asset_frame, textvariable=self.asset_var, 
-                                       values=all_assets, 
+                                       values=common_assets, 
                                        state="readonly", width=15)
         self.asset_combo.pack(side="left", padx=(0, 10))
         
@@ -457,73 +743,35 @@ class SubAccountUI:
         summary_scrollbar.pack(side="right", fill="y")
         self.summary_tree.configure(yscrollcommand=summary_scrollbar.set)
         
-    def load_accounts(self):
-        """Load all accounts from JSON files"""
-        self.accounts_data.clear()
-        self.account_listbox.delete(0, tk.END)
-        
-        if not os.path.exists(self.accounts_dir):
-            return
-        
-        for filename in os.listdir(self.accounts_dir):
-            if filename.endswith('.json'):
-                try:
-                    filepath = os.path.join(self.accounts_dir, filename)
-                    with open(filepath, 'r') as f:
-                        account_data = json.load(f)
-                        account_id = account_data.get('account_id')
-                        if account_id:
-                            self.accounts_data[account_id] = account_data
-                            nickname = account_data.get('nick_name', f'Account {account_id}')
-                            self.account_listbox.insert(tk.END, f"{account_id}: {nickname}")
-                except Exception as e:
-                    print(f"Error loading account {filename}: {e}")
-        
-        # Update combo boxes
-        account_list = [f"{id}: {data.get('nick_name', f'Account {id}')}" 
-                       for id, data in self.accounts_data.items()]
-        self.from_account_combo['values'] = account_list
-        self.to_account_combo['values'] = account_list
-        self.trade_account_combo['values'] = account_list
-        
-        # Update asset dropdown with all available assets
-        self.update_asset_dropdown()
-        
-        # Update overview
-        self.update_overview()
-        
-    def update_asset_dropdown(self):
-        """Update the asset dropdown with all available assets from accounts"""
-        common_assets = ['ZUSD', 'ZEUR', 'XXBT', 'XETH', 'ADA', 'DOT', 'LINK', 'LTC', 'XRP']
-        all_assets = set(common_assets)
-        
-        # Add all assets from existing accounts
-        for account_data in self.accounts_data.values():
-            balances = account_data.get('balances', {})
-            all_assets.update(balances.keys())
-        
-        all_assets = sorted(list(all_assets))
-        
-        # Update the asset combo if it exists
-        if hasattr(self, 'asset_combo'):
-            self.asset_combo['values'] = all_assets
-        
     def on_account_select(self, event):
-        """Handle account selection"""
+        """Handle account selection with async detail loading"""
         selection = self.account_listbox.curselection()
         if selection:
             account_text = self.account_listbox.get(selection[0])
             account_id = int(account_text.split(':')[0])
             self.selected_account_id = account_id
-            self.display_account_details(account_id)
+            
+            # Load details asynchronously to prevent UI blocking
+            self.async_display_account_details(account_id)
+    
+    def async_display_account_details(self, account_id: int):
+        """Display account details asynchronously"""
+        def load_details():
+            return self.accounts_data.get(account_id)
         
-    def display_account_details(self, account_id: int):
-        """Display details for selected account"""
-        if account_id not in self.accounts_data:
-            return
+        def on_details_loaded(future):
+            try:
+                account_data = future.result()
+                if account_data:
+                    self.root.after(0, self._update_account_details_ui, account_id, account_data)
+            except Exception as e:
+                print(f"Error loading account details: {e}")
         
-        account_data = self.accounts_data[account_id]
-        
+        future = self.executor.submit(load_details)
+        future.add_done_callback(on_details_loaded)
+    
+    def _update_account_details_ui(self, account_id: int, account_data: dict):
+        """Update account details UI"""
         # Update labels
         self.account_id_label.config(text=f"Account ID: {account_id}")
         self.nickname_label.config(text=f"Nickname: {account_data.get('nick_name', 'N/A')}")
@@ -537,6 +785,10 @@ class SubAccountUI:
         balances = account_data.get('balances', {})
         for asset, balance in balances.items():
             self.balances_tree.insert('', tk.END, values=(asset, f"{balance:.8f}"))
+    
+    def display_account_details(self, account_id: int):
+        """Legacy method for compatibility"""
+        self.async_display_account_details(account_id)
         
     def create_account_dialog(self):
         """Dialog to create a new account"""
@@ -578,6 +830,7 @@ class SubAccountUI:
                 if filepath:
                     messagebox.showinfo("Success", f"Account created successfully!\nSaved to: {filepath}")
                     dialog.destroy()
+                    self.load_accounts()  # Refresh the account list
                 else:
                     messagebox.showerror("Error", "Failed to create account")
             except ValueError:
@@ -597,6 +850,7 @@ class SubAccountUI:
             if account_edit.delete_account():
                 messagebox.showinfo("Success", "Account deleted successfully")
                 self.selected_account_id = None
+                self.load_accounts()  # Refresh the account list
             else:
                 messagebox.showerror("Error", "Failed to delete account")
         
@@ -704,6 +958,8 @@ class SubAccountUI:
                 account_edit = AccountEdit(self.selected_account_id)
                 if account_edit.edit_account_balance(account_data['balances']):
                     messagebox.showinfo("Success", f"Balance updated: {asset} = {amount}")
+                    # Update local cache
+                    self.accounts_data[self.selected_account_id] = account_data
                     self.display_account_details(self.selected_account_id)
                     dialog.destroy()
                 else:
@@ -757,6 +1013,8 @@ class SubAccountUI:
                 self.asset_var.set('')
                 self.custom_asset_var.set('')
                 self.amount_var.set('')
+                # Refresh accounts to update balances
+                self.load_accounts()
             else:
                 messagebox.showerror("Error", "Transfer failed")
         except (ValueError, IndexError):
@@ -779,83 +1037,34 @@ class SubAccountUI:
                 self.pair_var.set('')
                 self.quantity_var.set('')
                 self.price_var.set('')
+                # Refresh accounts to update balances
+                self.load_accounts()
             else:
                 messagebox.showerror("Error", "Trade posting failed")
         except (ValueError, IndexError):
             messagebox.showerror("Error", "Please fill all fields correctly")
-        
+
     def update_overview(self):
-        """Update the overview tab with current data"""
-        total_accounts = len(self.accounts_data)
-        active_accounts = sum(1 for data in self.accounts_data.values() if data.get('active', False))
-        
-        # Calculate total portfolio value and other stats using real-time prices
-        total_value = 0.0
-        account_values = []
-        largest_account = None
-        largest_value = 0.0
-        last_activity = "No activity"
-        
-        for account_id, account_data in self.accounts_data.items():
-            # Use the account_value method for real-time pricing
-            account_value = self.sub_account_manager.account_value(account_id)
-            if account_value is not None:
-                total_value += account_value
-                account_values.append(account_value)
-                
-                if account_value > largest_value:
-                    largest_value = account_value
-                    largest_account = account_data.get('nick_name', f'Account {account_id}')
-            else:
-                # Fallback to 0 if account_value fails
-                account_values.append(0.0)
-            
-            # Get last activity from trade history
-            trade_history = account_data.get('trade_history', [])
-            if trade_history:
-                last_trade = trade_history[-1]['timestamp']
-                if last_activity == "No activity" or last_trade > last_activity:
-                    last_activity = last_trade
-        
-        # Calculate average account value
-        avg_account_value = total_value / total_accounts if total_accounts > 0 else 0.0
-        
-        # Update labels
-        self.total_accounts_label.config(text=f"{total_accounts}")
-        self.total_value_label.config(text=f"${total_value:,.2f}")
-        self.active_accounts_label.config(text=f"{active_accounts}")
-        self.largest_account_label.config(text=f"{largest_account}" if largest_account else "--")
-        self.avg_account_value_label.config(text=f"${avg_account_value:,.2f}")
-        self.last_activity_label.config(text=f"{last_activity}")
-        
-        # Update summary table
-        for item in self.summary_tree.get_children():
-            self.summary_tree.delete(item)
-        
-        for account_id, account_data in self.accounts_data.items():
-            # Use the account_value method for real-time pricing
-            account_value = self.sub_account_manager.account_value(account_id)
-            if account_value is None:
-                account_value = 0.0
-            
-            # Get last activity from trade history
-            trade_history = account_data.get('trade_history', [])
-            last_activity = "No activity"
-            if trade_history:
-                last_activity = trade_history[-1]['timestamp']
-            
-            self.summary_tree.insert('', tk.END, values=(
-                account_id,
-                account_data.get('nick_name', f'Account {account_id}'),
-                'Active' if account_data.get('active', False) else 'Inactive',
-                f"${account_value:,.2f}",
-                last_activity
-            ))
+        """Legacy method for compatibility - delegates to async version"""
+        self.async_update_overview()
+
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=False)
 
 def main():
     """Main function to run the UI"""
     root = tk.Tk()
     app = SubAccountUI(root)
+    
+    # Ensure proper cleanup on window close
+    def on_closing():
+        if hasattr(app, 'executor'):
+            app.executor.shutdown(wait=False)
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 if __name__ == "__main__":
