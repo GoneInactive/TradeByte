@@ -1,0 +1,13 @@
+{
+    "account_id": 2,
+    "nick_name": "poop",
+    "balance": {
+        "ZUSD": 0.0,
+        "ZEUR": 0.0
+    },
+    "created_date": "2025-07-29",
+    "active": true,
+    "balances": {
+        "ZUSD": 2939340.0
+    }
+}

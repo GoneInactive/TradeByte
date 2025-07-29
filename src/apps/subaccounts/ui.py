@@ -12,8 +12,7 @@ except:
     try:
         from src.apps.subaccounts.account import SubAccount, AccountEdit
     except Exception as e:
-        from account import SubAccount, AccountEdit
-        print(f"C.ERROR: {e}")
+        print(f"C.Error: {e}")
 import datetime
 
 class SubAccountUI:
@@ -99,27 +98,32 @@ class SubAccountUI:
         """Batch update prices for multiple pairs to reduce API calls"""
         current_time = time.time()
         
-        # If cache is still valid, return cached prices
-        if current_time - self.cache_timestamp < self.cache_duration:
+        # If cache is still valid and has all required pairs, return cached prices
+        if (current_time - self.cache_timestamp < self.cache_duration and 
+            all(pair in self.price_cache for pair in required_pairs)):
             return {pair: self.price_cache.get(pair, 0.0) for pair in required_pairs}
         
         new_prices = {}
         
-        # USD pairs for common assets
+        # USD pairs for common assets - using correct Kraken pair names
         pair_mappings = {
-            'ZUSD': ('ZUSDUSD', 1.0),  # USD to USD = 1:1
-            'ZEUR': ('EURUSD', None),
-            'XXBT': ('XXBTZUSD', None),
-            'XETH': ('XETHZUSD', None),
-            'ADA': ('ADAUSD', None),
-            'DOT': ('DOTUSD', None),
-            'LINK': ('LINKUSD', None),
-            'LTC': ('LTCUSD', None),
-            'XRP': ('XRPUSD', None)
+            'ZUSD': ('ZUSDUSD', 1.0),    # USD to USD = 1:1
+            'ZEUR': ('EURUSD', None),    # This might not exist on Kraken, try EURFUSD
+            'XXBT': ('XXBTZUSD', None),  # Bitcoin to USD
+            'XETH': ('XETHZUSD', None),  # Ethereum to USD
+            'ADA': ('ADAUSD', None),     # Cardano to USD
+            'DOT': ('DOTUSD', None),     # Polkadot to USD
+            'LINK': ('LINKUSD', None),   # Chainlink to USD
+            'LTC': ('LTCUSD', None),     # Litecoin to USD
+            'XRP': ('XRPUSD', None)      # Ripple to USD
         }
         
-        # Batch API calls for efficiency
-        for asset in required_pairs:
+        # Get prices for assets that need updates
+        assets_to_update = [asset for asset in required_pairs 
+                           if asset not in self.price_cache or 
+                           current_time - self.cache_timestamp >= self.cache_duration]
+        
+        for asset in assets_to_update:
             try:
                 if asset == 'ZUSD':
                     new_prices[asset] = 1.0
@@ -128,29 +132,64 @@ class SubAccountUI:
                     if fixed_price:
                         new_prices[asset] = fixed_price
                     else:
-                        # Only make API call if not in cache
+                        # Make API call with error handling
                         try:
                             ask = self.sub_account_manager.client.get_ask(pair)
                             bid = self.sub_account_manager.client.get_bid(pair)
-                            if ask and bid:
-                                new_prices[asset] = (ask + bid) / 2
+                            
+                            # Validate that we got numeric values
+                            if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
+                                new_prices[asset] = (float(ask) + float(bid)) / 2
                             else:
+                                print(f"Invalid price data for {asset}: ask={ask}, bid={bid}")
                                 new_prices[asset] = 0.0
-                        except:
+                        except Exception as api_error:
+                            print(f"API error for {asset} ({pair}): {api_error}")
                             new_prices[asset] = 0.0
                 else:
-                    # For unknown assets, use fallback
-                    new_prices[asset] = 0.0
+                    # For unknown assets, try multiple pair formats
+                    price_found = False
+                    possible_pairs = [
+                        f"{asset}USD",      # Standard format
+                        f"{asset}ZUSD",     # Kraken Z-prefix format
+                        f"X{asset}USD",     # Kraken X-prefix format
+                        f"X{asset}ZUSD"     # Combined prefix format
+                    ]
+                    
+                    for test_pair in possible_pairs:
+                        try:
+                            ask = self.sub_account_manager.client.get_ask(test_pair)
+                            bid = self.sub_account_manager.client.get_bid(test_pair)
+                            
+                            if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
+                                new_prices[asset] = (float(ask) + float(bid)) / 2
+                                price_found = True
+                                print(f"Found price for {asset} using pair {test_pair}: ${new_prices[asset]:.2f}")
+                                break
+                        except:
+                            continue
+                    
+                    if not price_found:
+                        print(f"Could not find valid price for unknown asset: {asset}")
+                        new_prices[asset] = 0.0
                     
             except Exception as e:
-                print(f"Error getting price for {asset}: {e}")
+                print(f"Error processing asset {asset}: {e}")
                 new_prices[asset] = 0.0
         
-        # Update cache
+        # Update cache with new prices
         self.price_cache.update(new_prices)
         self.cache_timestamp = current_time
         
-        return new_prices
+        # Return prices for all requested pairs (mix of cached and new)
+        result = {}
+        for pair in required_pairs:
+            if pair in new_prices:
+                result[pair] = new_prices[pair]
+            else:
+                result[pair] = self.price_cache.get(pair, 0.0)
+        
+        return result
     
     def calculate_account_value_fast(self, account_data: dict) -> float:
         """Fast calculation of account value using cached prices"""
@@ -158,19 +197,75 @@ class SubAccountUI:
         if not balances:
             return 0.0
         
+        # Filter out zero balances to reduce API calls
+        non_zero_balances = {asset: balance for asset, balance in balances.items() if balance != 0}
+        if not non_zero_balances:
+            return 0.0
+        
         # Get all required assets
-        required_assets = list(balances.keys())
+        required_assets = list(non_zero_balances.keys())
         
         # Batch update prices
-        prices = self.batch_update_prices(required_assets)
+        try:
+            prices = self.batch_update_prices(required_assets)
+        except Exception as e:
+            print(f"Error batch updating prices: {e}")
+            # Fallback to individual price fetching
+            prices = {}
+            for asset in required_assets:
+                try:
+                    if asset == 'ZUSD':
+                        prices[asset] = 1.0
+                    else:
+                        # Try to get individual price
+                        price = self.get_individual_price(asset)
+                        prices[asset] = price if price is not None else 0.0
+                except:
+                    prices[asset] = 0.0
         
         total_value = 0.0
-        for asset, balance in balances.items():
-            if balance != 0:  # Skip zero balances
-                price = prices.get(asset, 0.0)
-                total_value += balance * price
+        for asset, balance in non_zero_balances.items():
+            price = prices.get(asset, 0.0)
+            asset_value = balance * price
+            total_value += asset_value
+            
+            # Debug output for troubleshooting
+            if price > 0:
+                print(f"Account value calc: {asset} = {balance:.6f} × ${price:.2f} = ${asset_value:.2f}")
         
         return total_value
+    
+    def get_individual_price(self, asset: str) -> Optional[float]:
+        """Get price for individual asset as fallback"""
+        try:
+            # Use same logic as batch update but for single asset
+            if asset == 'ZUSD':
+                return 1.0
+            
+            # Try common pair formats
+            possible_pairs = [
+                f"{asset}USD",
+                f"{asset}ZUSD", 
+                f"X{asset}USD",
+                f"X{asset}ZUSD"
+            ]
+            
+            for pair in possible_pairs:
+                try:
+                    ask = self.sub_account_manager.client.get_ask(pair)
+                    bid = self.sub_account_manager.client.get_bid(pair)
+                    
+                    if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
+                        return (float(ask) + float(bid)) / 2
+                except:
+                    continue
+            
+            print(f"Could not get price for asset: {asset}")
+            return 0.0
+            
+        except Exception as e:
+            print(f"Error getting individual price for {asset}: {e}")
+            return 0.0
 
     def async_load_accounts(self):
         """Load accounts asynchronously to prevent UI blocking"""
@@ -335,34 +430,54 @@ class SubAccountUI:
     
     def _update_overview_ui(self, stats):
         """Update overview UI with calculated stats"""
-        # Update statistics labels
-        self.total_accounts_label.config(text=f"{stats['total_accounts']}")
-        self.total_value_label.config(text=f"${stats['total_value']:,.2f}")
-        self.active_accounts_label.config(text=f"{stats['active_accounts']}")
-        self.largest_account_label.config(text=f"{stats['largest_account']}" if stats['largest_account'] else "--")
-        self.avg_account_value_label.config(text=f"${stats['avg_account_value']:,.2f}")
-        self.last_activity_label.config(text=f"{stats['last_activity']}")
-        
-        # Update summary table
-        for item in self.summary_tree.get_children():
-            self.summary_tree.delete(item)
-        
-        for i, (account_id, account_data) in enumerate(self.accounts_data.items()):
-            account_value = stats['account_values'][i] if i < len(stats['account_values']) else 0.0
+        try:
+            # Update statistics labels
+            self.total_accounts_label.config(text=f"{stats['total_accounts']}")
+            self.total_value_label.config(text=f"${stats['total_value']:,.2f}")
+            self.active_accounts_label.config(text=f"{stats['active_accounts']}")
+            self.largest_account_label.config(text=f"{stats['largest_account']}" if stats['largest_account'] else "--")
+            self.avg_account_value_label.config(text=f"${stats['avg_account_value']:,.2f}")
+            self.last_activity_label.config(text=f"{stats['last_activity']}")
             
-            # Get last activity
-            trade_history = account_data.get('trade_history', [])
-            last_activity = "No activity"
-            if trade_history:
-                last_activity = trade_history[-1]['timestamp']
+            # Update summary table
+            for item in self.summary_tree.get_children():
+                self.summary_tree.delete(item)
             
-            self.summary_tree.insert('', tk.END, values=(
-                account_id,
-                account_data.get('nick_name', f'Account {account_id}'),
-                'Active' if account_data.get('active', False) else 'Inactive',
-                f"${account_value:,.2f}",
-                last_activity
-            ))
+            for i, (account_id, account_data) in enumerate(self.accounts_data.items()):
+                account_value = stats['account_values'][i] if i < len(stats['account_values']) else 0.0
+                
+                # Get last activity
+                trade_history = account_data.get('trade_history', [])
+                last_activity = "No activity"
+                if trade_history:
+                    try:
+                        last_activity = trade_history[-1].get('timestamp', 'No activity')
+                        # Format timestamp if it's a datetime string
+                        if isinstance(last_activity, str) and last_activity != 'No activity':
+                            # Try to parse and format the datetime
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                                last_activity = dt.strftime('%Y-%m-%d %H:%M')
+                            except:
+                                pass  # Keep original string if parsing fails
+                    except:
+                        last_activity = "No activity"
+                
+                self.summary_tree.insert('', tk.END, values=(
+                    account_id,
+                    account_data.get('nick_name', f'Account {account_id}'),
+                    'Active' if account_data.get('active', False) else 'Inactive',
+                    f"${account_value:,.2f}",
+                    last_activity
+                ))
+                
+        except Exception as e:
+            print(f"Error updating overview UI: {e}")
+            # Set default values if update fails
+            self.total_accounts_label.config(text="Error")
+            self.total_value_label.config(text="$0.00")
+            self.active_accounts_label.config(text="0")
 
     def create_widgets(self):
         """Create all UI widgets with modern dark theme"""
