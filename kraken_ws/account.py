@@ -43,6 +43,10 @@ class KrakenAccount:
         # Add handlers for private data streams
         self._private_handlers: Dict[str, List[Callable]] = {}
         self._subscriptions: Dict[str, Dict] = {}
+        
+        # Cancel on disconnect settings
+        self._cancel_on_disconnect_enabled = False
+        self._cancel_on_disconnect_timeout = None
 
     @classmethod
     async def create(cls, api_key: Optional[str] = None, api_secret: Optional[str] = None):
@@ -239,6 +243,9 @@ class KrakenAccount:
         
         except websockets.exceptions.ConnectionClosed:
             logger.warning("WebSocket v2 connection closed.")
+            # Trigger cancel on disconnect if enabled
+            if self._cancel_on_disconnect_enabled:
+                logger.info("Connection lost - cancel_on_disconnect is enabled, orders should be cancelled automatically")
         except Exception as e:
             logger.error(f"Error in WebSocket v2 message handler: {e}", exc_info=True)
         finally:
@@ -290,6 +297,158 @@ class KrakenAccount:
         
         await self._ws_connection.send(json.dumps(subscription))
         logger.debug(f"WS v2 Subscription Sent: {subscription}")
+
+    # --- Cancel All Orders After (Dead Man's Switch) Methods ---
+
+    async def set_cancel_all_orders_after(self, timeout: int) -> Dict:
+        """
+        Set up a "Dead Man's Switch" that will cancel all orders after the specified timeout.
+        This must be called periodically to reset the timer and prevent cancellation.
+        
+        Args:
+            timeout: Duration in seconds to set/extend the timer (max 86400 seconds).
+                    Set to 0 to disable the mechanism.
+        
+        Returns:
+            Response from the server with currentTime and triggerTime.
+        """
+        if timeout < 0 or timeout > 86400:
+            raise ValueError("Timeout must be between 0 and 86400 seconds")
+        
+        payload = {
+            "method": "cancel_all_orders_after",
+            "params": {
+                "timeout": timeout
+            }
+        }
+        
+        try:
+            result = await self._send_request_v2(payload)
+            
+            if timeout > 0:
+                self._cancel_on_disconnect_enabled = True
+                self._cancel_on_disconnect_timeout = timeout
+                logger.info(f"Cancel all orders after timer set to {timeout} seconds")
+            else:
+                self._cancel_on_disconnect_enabled = False
+                self._cancel_on_disconnect_timeout = None
+                logger.info("Cancel all orders after timer disabled")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to set cancel all orders after: {e}")
+            raise
+
+    async def enable_cancel_on_disconnect(self, timeout: int = 60) -> Dict:
+        """
+        Enable the "Dead Man's Switch" mechanism with the specified timeout.
+        
+        Args:
+            timeout: Duration in seconds (recommended: 60). Must be > 0.
+        
+        Returns:
+            Response from the server.
+        """
+        if timeout <= 0:
+            raise ValueError("Timeout must be greater than 0 to enable")
+        
+        return await self.set_cancel_all_orders_after(timeout)
+
+    async def disable_cancel_on_disconnect(self) -> Dict:
+        """
+        Disable the "Dead Man's Switch" mechanism.
+        
+        Returns:
+            Response from the server.
+        """
+        return await self.set_cancel_all_orders_after(0)
+
+    async def reset_cancel_timer(self, timeout: int = 60) -> Dict:
+        """
+        Reset the cancel timer to prevent order cancellation.
+        Should be called periodically (every 15-30 seconds recommended).
+        
+        Args:
+            timeout: Duration in seconds to reset the timer to.
+        
+        Returns:
+            Response from the server.
+        """
+        return await self.set_cancel_all_orders_after(timeout)
+
+    async def get_cancel_on_disconnect_status(self) -> Dict:
+        """
+        Get the current cancel on disconnect status.
+        Note: This returns local state. The actual timer status is on the server.
+        
+        Returns:
+            Dict containing enabled status and timeout (if applicable).
+        """
+        return {
+            "enabled": self._cancel_on_disconnect_enabled,
+            "timeout": self._cancel_on_disconnect_timeout,
+            "note": "This shows local state. Call set_cancel_all_orders_after() to get server response with current/trigger times."
+        }
+
+    async def set_cancel_on_disconnect(self, enabled: bool, timeout: int = 60) -> Dict:
+        """
+        Convenience method to enable or disable the cancel mechanism.
+        
+        Args:
+            enabled: Whether to enable or disable the mechanism
+            timeout: Duration in seconds when enabling (ignored when disabling)
+        
+        Returns:
+            Response from the server.
+        """
+        if enabled:
+            return await self.enable_cancel_on_disconnect(timeout)
+        else:
+            return await self.disable_cancel_on_disconnect()
+
+    async def start_cancel_timer_task(self, timeout: int = 60, reset_interval: int = 30) -> asyncio.Task:
+        """
+        Start a background task that automatically resets the cancel timer.
+        
+        Args:
+            timeout: Duration in seconds for the cancel timer
+            reset_interval: How often to reset the timer (in seconds)
+        
+        Returns:
+            The asyncio Task that can be cancelled to stop the auto-reset
+        """
+        async def reset_timer_loop():
+            try:
+                # Initial setup
+                await self.set_cancel_all_orders_after(timeout)
+                logger.info(f"Started auto-reset timer: {timeout}s timeout, reset every {reset_interval}s")
+                
+                while True:
+                    await asyncio.sleep(reset_interval)
+                    if self._ws_authenticated and self._ws_connection:
+                        try:
+                            result = await self.set_cancel_all_orders_after(timeout)
+                            logger.debug(f"Timer reset successful: {result.get('result', {}).get('triggerTime', 'N/A')}")
+                        except Exception as e:
+                            logger.error(f"Failed to reset cancel timer: {e}")
+                    else:
+                        logger.warning("WebSocket not connected, skipping timer reset")
+                        
+            except asyncio.CancelledError:
+                logger.info("Cancel timer auto-reset task cancelled")
+                # Try to disable the timer on cancellation
+                try:
+                    if self._ws_authenticated and self._ws_connection:
+                        await self.set_cancel_all_orders_after(0)
+                        logger.info("Disabled cancel timer on task cancellation")
+                except:
+                    pass
+                raise
+            except Exception as e:
+                logger.error(f"Error in cancel timer task: {e}")
+        
+        return asyncio.create_task(reset_timer_loop())
 
     # --- Private Data Subscriptions (v2 format) ---
 
@@ -662,6 +821,11 @@ class KrakenAccount:
 
     async def close(self):
         """Closes the WebSocket connection and cleans up resources."""
+        try:   
+            self.cancel_all_orders()
+        except:
+            pass
+        
         if self._message_handler_task:
             self._message_handler_task.cancel()
             try:

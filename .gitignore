@@ -65,3 +65,5 @@ src/user-applications/notebook/main.ipynb
 # Sub-account data
 #src/apps/sub-accounts/data/accounts/
 #src/apps/sub-accounts/data/trades/
+/src/logs
+/data/accounts
