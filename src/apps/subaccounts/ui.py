@@ -25,17 +25,20 @@ class SubAccountUI:
         # Initialize components
         self.sub_account_manager = SubAccount()
         self.accounts_dir = os.path.join('data', 'accounts')
+        self.prices_file = os.path.join('data', 'cached_prices.json')
         
-        # Data storage with caching
+        # Data storage with persistent caching
         self.accounts_data = {}
         self.selected_account_id = None
         self.price_cache = {}  # Cache for API prices
-        self.cache_timestamp = 0
-        self.cache_duration = 60  # Cache prices for 60 seconds
         
         # Threading for async operations
         self.executor = ThreadPoolExecutor(max_workers=4)
         self.loading_in_progress = False
+        self.fetching_prices = False
+        
+        # Load cached prices on startup
+        self.load_cached_prices()
         
         # Setup styles
         self.setup_styles()
@@ -45,6 +48,162 @@ class SubAccountUI:
         
         # Load accounts asynchronously
         self.async_load_accounts()
+        
+    def load_cached_prices(self):
+        """Load cached prices from file"""
+        try:
+            if os.path.exists(self.prices_file):
+                with open(self.prices_file, 'r') as f:
+                    self.price_cache = json.load(f)
+                print(f"Loaded {len(self.price_cache)} cached prices")
+            else:
+                # Ensure the data directory exists
+                os.makedirs(os.path.dirname(self.prices_file), exist_ok=True)
+                self.price_cache = {}
+                print("No cached prices found, starting with empty cache")
+        except Exception as e:
+            print(f"Error loading cached prices: {e}")
+            self.price_cache = {}
+    
+    def save_cached_prices(self):
+        """Save cached prices to file"""
+        try:
+            os.makedirs(os.path.dirname(self.prices_file), exist_ok=True)
+            with open(self.prices_file, 'w') as f:
+                json.dump(self.price_cache, f, indent=2)
+            print(f"Saved {len(self.price_cache)} cached prices")
+        except Exception as e:
+            print(f"Error saving cached prices: {e}")
+    
+    def refresh_all_prices(self):
+        """Refresh all prices by fetching from API"""
+        if self.fetching_prices:
+            messagebox.showinfo("Info", "Price refresh already in progress")
+            return
+        
+        self.fetching_prices = True
+        self.status_label.config(text="Refreshing prices...")
+        
+        def fetch_prices_task():
+            try:
+                # Get all unique assets from accounts
+                all_assets = set()
+                for account_data in self.accounts_data.values():
+                    balances = account_data.get('balances', {})
+                    all_assets.update(balances.keys())
+                
+                if not all_assets:
+                    return {}
+                
+                print(f"Fetching prices for {len(all_assets)} assets: {list(all_assets)}")
+                
+                new_prices = {}
+                
+                # USD pairs for common assets - using correct Kraken pair names
+                pair_mappings = {
+                    'ZUSD': ('ZUSDUSD', 1.0),    # USD to USD = 1:1
+                    'ZEUR': ('EURUSD', None),    # This might not exist on Kraken, try EURFUSD
+                    'XXBT': ('XXBTZUSD', None),  # Bitcoin to USD
+                    'XETH': ('XETHZUSD', None),  # Ethereum to USD
+                    'ADA': ('ADAUSD', None),     # Cardano to USD
+                    'DOT': ('DOTUSD', None),     # Polkadot to USD
+                    'LINK': ('LINKUSD', None),   # Chainlink to USD
+                    'LTC': ('LTCUSD', None),     # Litecoin to USD
+                    'XRP': ('XRPUSD', None)      # Ripple to USD
+                }
+                
+                for asset in all_assets:
+                    try:
+                        if asset == 'ZUSD':
+                            new_prices[asset] = 1.0
+                            print(f"Price for {asset}: $1.00 (fixed)")
+                        elif asset in pair_mappings:
+                            pair, fixed_price = pair_mappings[asset]
+                            if fixed_price:
+                                new_prices[asset] = fixed_price
+                                print(f"Price for {asset}: ${fixed_price} (fixed)")
+                            else:
+                                # Make API call with error handling
+                                try:
+                                    ask = self.sub_account_manager.client.get_ask(pair)
+                                    bid = self.sub_account_manager.client.get_bid(pair)
+                                    
+                                    # Validate that we got numeric values
+                                    if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
+                                        new_prices[asset] = (float(ask) + float(bid)) / 2
+                                        print(f"Price for {asset} ({pair}): ${new_prices[asset]:.2f}")
+                                    else:
+                                        print(f"Invalid price data for {asset}: ask={ask}, bid={bid}")
+                                        # Keep old price if available, otherwise set to 0
+                                        new_prices[asset] = self.price_cache.get(asset, 0.0)
+                                except Exception as api_error:
+                                    print(f"API error for {asset} ({pair}): {api_error}")
+                                    # Keep old price if available, otherwise set to 0
+                                    new_prices[asset] = self.price_cache.get(asset, 0.0)
+                        else:
+                            # For unknown assets, try multiple pair formats
+                            price_found = False
+                            possible_pairs = [
+                                f"{asset}USD",      # Standard format
+                                f"{asset}ZUSD",     # Kraken Z-prefix format
+                                f"X{asset}USD",     # Kraken X-prefix format
+                                f"X{asset}ZUSD"     # Combined prefix format
+                            ]
+                            
+                            for test_pair in possible_pairs:
+                                try:
+                                    ask = self.sub_account_manager.client.get_ask(test_pair)
+                                    bid = self.sub_account_manager.client.get_bid(test_pair)
+                                    
+                                    if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
+                                        new_prices[asset] = (float(ask) + float(bid)) / 2
+                                        price_found = True
+                                        print(f"Found price for {asset} using pair {test_pair}: ${new_prices[asset]:.2f}")
+                                        break
+                                except:
+                                    continue
+                            
+                            if not price_found:
+                                print(f"Could not find valid price for unknown asset: {asset}")
+                                # Keep old price if available, otherwise set to 0
+                                new_prices[asset] = self.price_cache.get(asset, 0.0)
+                    
+                    except Exception as e:
+                        print(f"Error processing asset {asset}: {e}")
+                        # Keep old price if available, otherwise set to 0
+                        new_prices[asset] = self.price_cache.get(asset, 0.0)
+                
+                return new_prices
+                
+            except Exception as e:
+                print(f"Error in fetch_prices_task: {e}")
+                return {}
+        
+        def on_prices_complete(future):
+            try:
+                new_prices = future.result()
+                # Update UI in main thread
+                self.root.after(0, self._update_prices_after_fetch, new_prices)
+            except Exception as e:
+                print(f"Error completing price fetch: {e}")
+                self.root.after(0, lambda: self.status_label.config(text="Error refreshing prices"))
+            finally:
+                self.fetching_prices = False
+        
+        future = self.executor.submit(fetch_prices_task)
+        future.add_done_callback(on_prices_complete)
+    
+    def _update_prices_after_fetch(self, new_prices):
+        """Update UI after prices are fetched"""
+        if new_prices:
+            self.price_cache = new_prices
+            self.save_cached_prices()
+            self.status_label.config(text=f"Refreshed {len(new_prices)} prices")
+            
+            # Update overview with new prices
+            self.async_update_overview()
+        else:
+            self.status_label.config(text="No prices to refresh")
         
     def setup_styles(self):
         """Configure modern dark theme matching speedy.py"""
@@ -82,190 +241,34 @@ class SubAccountUI:
         style.configure('Action.TButton', font=('Arial', 11, 'bold'))
         style.configure('Primary.TButton', font=('Arial', 11, 'bold'))
 
-    def get_cached_price(self, pair: str) -> Optional[float]:
-        """Get cached price or fetch new one if cache is stale"""
-        current_time = time.time()
-        
-        # Check if we have a cached price and it's still valid
-        if (pair in self.price_cache and 
-            current_time - self.cache_timestamp < self.cache_duration):
-            return self.price_cache[pair]
-        
-        # Cache is stale or price not found, return None to trigger batch update
-        return None
-    
-    def batch_update_prices(self, required_pairs: List[str]) -> Dict[str, float]:
-        """Batch update prices for multiple pairs to reduce API calls"""
-        current_time = time.time()
-        
-        # If cache is still valid and has all required pairs, return cached prices
-        if (current_time - self.cache_timestamp < self.cache_duration and 
-            all(pair in self.price_cache for pair in required_pairs)):
-            return {pair: self.price_cache.get(pair, 0.0) for pair in required_pairs}
-        
-        new_prices = {}
-        
-        # USD pairs for common assets - using correct Kraken pair names
-        pair_mappings = {
-            'ZUSD': ('ZUSDUSD', 1.0),    # USD to USD = 1:1
-            'ZEUR': ('EURUSD', None),    # This might not exist on Kraken, try EURFUSD
-            'XXBT': ('XXBTZUSD', None),  # Bitcoin to USD
-            'XETH': ('XETHZUSD', None),  # Ethereum to USD
-            'ADA': ('ADAUSD', None),     # Cardano to USD
-            'DOT': ('DOTUSD', None),     # Polkadot to USD
-            'LINK': ('LINKUSD', None),   # Chainlink to USD
-            'LTC': ('LTCUSD', None),     # Litecoin to USD
-            'XRP': ('XRPUSD', None)      # Ripple to USD
-        }
-        
-        # Get prices for assets that need updates
-        assets_to_update = [asset for asset in required_pairs 
-                           if asset not in self.price_cache or 
-                           current_time - self.cache_timestamp >= self.cache_duration]
-        
-        for asset in assets_to_update:
-            try:
-                if asset == 'ZUSD':
-                    new_prices[asset] = 1.0
-                elif asset in pair_mappings:
-                    pair, fixed_price = pair_mappings[asset]
-                    if fixed_price:
-                        new_prices[asset] = fixed_price
-                    else:
-                        # Make API call with error handling
-                        try:
-                            ask = self.sub_account_manager.client.get_ask(pair)
-                            bid = self.sub_account_manager.client.get_bid(pair)
-                            
-                            # Validate that we got numeric values
-                            if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
-                                new_prices[asset] = (float(ask) + float(bid)) / 2
-                            else:
-                                print(f"Invalid price data for {asset}: ask={ask}, bid={bid}")
-                                new_prices[asset] = 0.0
-                        except Exception as api_error:
-                            print(f"API error for {asset} ({pair}): {api_error}")
-                            new_prices[asset] = 0.0
-                else:
-                    # For unknown assets, try multiple pair formats
-                    price_found = False
-                    possible_pairs = [
-                        f"{asset}USD",      # Standard format
-                        f"{asset}ZUSD",     # Kraken Z-prefix format
-                        f"X{asset}USD",     # Kraken X-prefix format
-                        f"X{asset}ZUSD"     # Combined prefix format
-                    ]
-                    
-                    for test_pair in possible_pairs:
-                        try:
-                            ask = self.sub_account_manager.client.get_ask(test_pair)
-                            bid = self.sub_account_manager.client.get_bid(test_pair)
-                            
-                            if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
-                                new_prices[asset] = (float(ask) + float(bid)) / 2
-                                price_found = True
-                                print(f"Found price for {asset} using pair {test_pair}: ${new_prices[asset]:.2f}")
-                                break
-                        except:
-                            continue
-                    
-                    if not price_found:
-                        print(f"Could not find valid price for unknown asset: {asset}")
-                        new_prices[asset] = 0.0
-                    
-            except Exception as e:
-                print(f"Error processing asset {asset}: {e}")
-                new_prices[asset] = 0.0
-        
-        # Update cache with new prices
-        self.price_cache.update(new_prices)
-        self.cache_timestamp = current_time
-        
-        # Return prices for all requested pairs (mix of cached and new)
-        result = {}
-        for pair in required_pairs:
-            if pair in new_prices:
-                result[pair] = new_prices[pair]
-            else:
-                result[pair] = self.price_cache.get(pair, 0.0)
-        
-        return result
+    def get_cached_price(self, asset: str) -> float:
+        """Get cached price (no API calls)"""
+        return self.price_cache.get(asset, 0.0)
     
     def calculate_account_value_fast(self, account_data: dict) -> float:
-        """Fast calculation of account value using cached prices"""
+        """Fast calculation of account value using cached prices only"""
         balances = account_data.get('balances', {})
         if not balances:
             return 0.0
         
-        # Filter out zero balances to reduce API calls
+        # Filter out zero balances
         non_zero_balances = {asset: balance for asset, balance in balances.items() if balance != 0}
         if not non_zero_balances:
             return 0.0
         
-        # Get all required assets
-        required_assets = list(non_zero_balances.keys())
-        
-        # Batch update prices
-        try:
-            prices = self.batch_update_prices(required_assets)
-        except Exception as e:
-            print(f"Error batch updating prices: {e}")
-            # Fallback to individual price fetching
-            prices = {}
-            for asset in required_assets:
-                try:
-                    if asset == 'ZUSD':
-                        prices[asset] = 1.0
-                    else:
-                        # Try to get individual price
-                        price = self.get_individual_price(asset)
-                        prices[asset] = price if price is not None else 0.0
-                except:
-                    prices[asset] = 0.0
-        
         total_value = 0.0
         for asset, balance in non_zero_balances.items():
-            price = prices.get(asset, 0.0)
+            price = self.get_cached_price(asset)
             asset_value = balance * price
             total_value += asset_value
             
             # Debug output for troubleshooting
             if price > 0:
                 print(f"Account value calc: {asset} = {balance:.6f} × ${price:.2f} = ${asset_value:.2f}")
+            elif balance > 0:
+                print(f"Account value calc: {asset} = {balance:.6f} × $0.00 (no price cached)")
         
         return total_value
-    
-    def get_individual_price(self, asset: str) -> Optional[float]:
-        """Get price for individual asset as fallback"""
-        try:
-            # Use same logic as batch update but for single asset
-            if asset == 'ZUSD':
-                return 1.0
-            
-            # Try common pair formats
-            possible_pairs = [
-                f"{asset}USD",
-                f"{asset}ZUSD", 
-                f"X{asset}USD",
-                f"X{asset}ZUSD"
-            ]
-            
-            for pair in possible_pairs:
-                try:
-                    ask = self.sub_account_manager.client.get_ask(pair)
-                    bid = self.sub_account_manager.client.get_bid(pair)
-                    
-                    if ask and bid and isinstance(ask, (int, float)) and isinstance(bid, (int, float)):
-                        return (float(ask) + float(bid)) / 2
-                except:
-                    continue
-            
-            print(f"Could not get price for asset: {asset}")
-            return 0.0
-            
-        except Exception as e:
-            print(f"Error getting individual price for {asset}: {e}")
-            return 0.0
 
     def async_load_accounts(self):
         """Load accounts asynchronously to prevent UI blocking"""
@@ -336,13 +339,16 @@ class SubAccountUI:
         # Update asset dropdown
         self.update_asset_dropdown()
         
-        # Update overview asynchronously
+        # Update overview (using cached prices)
         self.async_update_overview()
         
-        self.status_label.config(text=f"Loaded {len(self.accounts_data)} accounts")
+        cached_count = len(self.price_cache)
+        self.status_label.config(text=f"Loaded {len(self.accounts_data)} accounts (using {cached_count} cached prices)")
     
     def load_accounts(self):
-        """Public method to reload accounts"""
+        """Public method to reload accounts (also refreshes prices)"""
+        # First refresh prices, then load accounts
+        self.refresh_all_prices()
         self.async_load_accounts()
         
     def update_asset_dropdown(self):
@@ -362,23 +368,13 @@ class SubAccountUI:
             self.asset_combo['values'] = all_assets
 
     def async_update_overview(self):
-        """Update overview statistics asynchronously"""
+        """Update overview statistics asynchronously using cached prices"""
         def calculate_stats():
             try:
                 total_accounts = len(self.accounts_data)
                 active_accounts = sum(1 for data in self.accounts_data.values() if data.get('active', False))
                 
-                # Get all unique assets for batch price update
-                all_assets = set()
-                for account_data in self.accounts_data.values():
-                    balances = account_data.get('balances', {})
-                    all_assets.update(balances.keys())
-                
-                # Batch update prices for all assets at once
-                if all_assets:
-                    self.batch_update_prices(list(all_assets))
-                
-                # Calculate portfolio stats
+                # Calculate portfolio stats using cached prices only
                 total_value = 0.0
                 account_values = []
                 largest_account = None
@@ -515,8 +511,10 @@ class SubAccountUI:
                   command=self.create_account_dialog, style='Action.TButton').pack(side="left", padx=(0, 10))
         ttk.Button(actions_frame, text="Delete Account", 
                   command=self.delete_account, style='Action.TButton').pack(side="left", padx=(0, 10))
-        ttk.Button(actions_frame, text="Refresh", 
-                  command=self.load_accounts, style='Action.TButton').pack(side="left")
+        ttk.Button(actions_frame, text="Refresh All", 
+                  command=self.load_accounts, style='Action.TButton').pack(side="left", padx=(0, 10))
+        ttk.Button(actions_frame, text="Refresh Prices", 
+                  command=self.refresh_all_prices, style='Action.TButton').pack(side="left")
         
         # Right side - Statistics
         right_panel = ttk.Frame(top_panel)
@@ -945,7 +943,7 @@ class SubAccountUI:
                 if filepath:
                     messagebox.showinfo("Success", f"Account created successfully!\nSaved to: {filepath}")
                     dialog.destroy()
-                    self.load_accounts()  # Refresh the account list
+                    self.async_load_accounts()  # Refresh the account list (without fetching prices)
                 else:
                     messagebox.showerror("Error", "Failed to create account")
             except ValueError:
@@ -965,7 +963,7 @@ class SubAccountUI:
             if account_edit.delete_account():
                 messagebox.showinfo("Success", "Account deleted successfully")
                 self.selected_account_id = None
-                self.load_accounts()  # Refresh the account list
+                self.async_load_accounts()  # Refresh the account list (without fetching prices)
             else:
                 messagebox.showerror("Error", "Failed to delete account")
         
@@ -1128,8 +1126,8 @@ class SubAccountUI:
                 self.asset_var.set('')
                 self.custom_asset_var.set('')
                 self.amount_var.set('')
-                # Refresh accounts to update balances
-                self.load_accounts()
+                # Refresh accounts to update balances (without fetching prices)
+                self.async_load_accounts()
             else:
                 messagebox.showerror("Error", "Transfer failed")
         except (ValueError, IndexError):
@@ -1152,8 +1150,8 @@ class SubAccountUI:
                 self.pair_var.set('')
                 self.quantity_var.set('')
                 self.price_var.set('')
-                # Refresh accounts to update balances
-                self.load_accounts()
+                # Refresh accounts to update balances (without fetching prices)
+                self.async_load_accounts()
             else:
                 messagebox.showerror("Error", "Trade posting failed")
         except (ValueError, IndexError):
