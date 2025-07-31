@@ -8,7 +8,7 @@ import urllib.parse
 import json
 import logging
 import decimal
-from typing import Dict, List, Optional, Any, Union, Callable
+from typing import Dict, List, Optional, Any, Union, Callable, Awaitable
 from pathlib import Path
 import yaml
 import websockets
@@ -31,31 +31,32 @@ class KrakenAccount:
         self.api_secret = None
         self._load_credentials(api_key, api_secret)
         
-        self._session = None
-        self._ws_connection = None
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._ws_connection: Optional[websockets.WebSocketClientProtocol] = None
         self._ws_authenticated = False
-        self._auth_token = None
+        self._auth_token: Optional[str] = None
         
         self._pending_requests: Dict[int, asyncio.Future] = {}
         self._message_handler_task: Optional[asyncio.Task] = None
         self._connection_lock = asyncio.Lock()
+        self._cancel_timer_task: Optional[asyncio.Task] = None
         
         # Add handlers for private data streams
-        self._private_handlers: Dict[str, List[Callable]] = {}
+        self._private_handlers: Dict[str, List[Callable[[Dict], Awaitable[None]]]] = {}
         self._subscriptions: Dict[str, Dict] = {}
         
         # Cancel on disconnect settings
         self._cancel_on_disconnect_enabled = False
-        self._cancel_on_disconnect_timeout = None
+        self._cancel_on_disconnect_timeout: Optional[int] = None
 
     @classmethod
-    async def create(cls, api_key: Optional[str] = None, api_secret: Optional[str] = None):
+    async def create(cls, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> 'KrakenAccount':
         """Factory method to create and connect a KrakenAccount instance using v2."""
         account = cls(api_key, api_secret)
         await account.connect_v2()
         return account
 
-    def _load_credentials(self, api_key: Optional[str], api_secret: Optional[str]):
+    def _load_credentials(self, api_key: Optional[str], api_secret: Optional[str]) -> None:
         """Loads API credentials from a config file or from provided parameters."""
         current_file = Path(__file__)
         config_path = current_file.parent.parent / "config" / "config.yaml"
@@ -146,53 +147,72 @@ class KrakenAccount:
             
         return result
 
-    async def connect_v2(self):
+    async def connect_v2(self) -> None:
         """Establishes and authenticates the WebSocket v2 connection."""
         async with self._connection_lock:
-            if self._ws_connection:
+            if self._ws_connection:# and not self._ws_connection.closed:
                 logger.info("WebSocket v2 connection already established.")
                 return
 
             try:
+                # Close any existing connection
+                if self._ws_connection:# and not self._ws_connection.closed:
+                    await self._ws_connection.close()
+                
+                # Get new auth token
                 self._auth_token = await self._get_ws_auth_token()
                 
+                # Establish new connection
                 self._ws_connection = await websockets.connect(
                     self.WS_URL_V2,
                     ping_interval=20,
-                    ping_timeout=10
+                    ping_timeout=10,
+                    close_timeout=1
                 )
                 
                 self._ws_authenticated = True
                 
-                if self._message_handler_task:
+                # Cancel any existing message handler
+                if self._message_handler_task and not self._message_handler_task.done():
                     self._message_handler_task.cancel()
+                    try:
+                        await self._message_handler_task
+                    except asyncio.CancelledError:
+                        pass
                     
+                # Start new message handler
                 self._message_handler_task = asyncio.create_task(self._handle_ws_messages_v2())
                 logger.info("WebSocket v2 connection established and authenticated.")
+
+                # Restore subscriptions if any
+                if self._subscriptions:
+                    logger.info("Restoring active subscriptions...")
+                    for sub in self._subscriptions.values():
+                        await self._send_subscription_v2(sub)
 
             except Exception as e:
                 logger.error(f"Failed to establish WebSocket v2 connection: {e}")
                 self._ws_authenticated = False
-                if self._ws_connection:
+                if self._ws_connection:# and not self._ws_connection.closed:
                     await self._ws_connection.close()
                 raise
 
     # Legacy method for backward compatibility
-    async def connect(self):
+    async def connect(self) -> None:
         """Legacy connect method - redirects to v2."""
         await self.connect_v2()
 
-    def add_handler(self, event_type: str, handler: Callable):
+    def add_handler(self, event_type: str, handler: Callable[[Dict], Awaitable[None]]) -> None:
         """Add a message handler for a specific private data type (e.g., 'executions')."""
         if event_type not in self._private_handlers:
             self._private_handlers[event_type] = []
         self._private_handlers[event_type].append(handler)
         logger.info(f"Added handler for private {event_type}")
 
-    async def _handle_ws_messages_v2(self):
+    async def _handle_ws_messages_v2(self) -> None:
         """Continuously listens for and processes incoming WebSocket v2 messages."""
         try:
-            async for message in self._ws_connection:
+            async for message in self._ws_connection:  # type: ignore
                 try:
                     data = json.loads(message)
                     logger.debug(f"WS v2 Recv: {data}")
@@ -235,17 +255,27 @@ class KrakenAccount:
                     # Handle ping messages
                     elif isinstance(data, dict) and data.get("method") == "ping":
                         pong_message = {"method": "pong", "req_id": data.get("req_id")}
-                        await self._ws_connection.send(json.dumps(pong_message))
+                        await self._ws_connection.send(json.dumps(pong_message))  # type: ignore
                         logger.debug("Sent pong response")
 
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to decode WebSocket message: {message}")
+                except Exception as e:
+                    logger.error(f"Error processing WebSocket message: {e}")
         
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("WebSocket v2 connection closed.")
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"WebSocket v2 connection closed: {e}")
             # Trigger cancel on disconnect if enabled
             if self._cancel_on_disconnect_enabled:
                 logger.info("Connection lost - cancel_on_disconnect is enabled, orders should be cancelled automatically")
+            
+            # Attempt to reconnect
+            logger.info("Attempting to reconnect...")
+            try:
+                await self.connect_v2()
+            except Exception as reconnect_error:
+                logger.error(f"Failed to reconnect: {reconnect_error}")
+                
         except Exception as e:
             logger.error(f"Error in WebSocket v2 message handler: {e}", exc_info=True)
         finally:
@@ -256,14 +286,15 @@ class KrakenAccount:
                     future.set_exception(Exception("WebSocket connection lost."))
             self._pending_requests.clear()
 
-    def connected(self):
-        if not self._ws_authenticated or not self._ws_connection:
+    def connected(self) -> bool:
+        """Check if the WebSocket connection is active and authenticated."""
+        if not self._ws_authenticated or not self._ws_connection:# or self._ws_connection.closed:
             return False
         return True
 
     async def _send_request_v2(self, payload: Dict, timeout: float = 10.0) -> Dict:
         """Sends a request over WebSocket v2 and waits for a response."""
-        if not self._ws_authenticated or not self._ws_connection:
+        if not self.connected():
             raise ConnectionError("WebSocket is not connected. Call connect_v2() first.")
 
         req_id = int(time.time() * 1000)
@@ -277,14 +308,19 @@ class KrakenAccount:
         future = asyncio.get_running_loop().create_future()
         self._pending_requests[req_id] = future
         
-        await self._ws_connection.send(json.dumps(payload))
-        logger.debug(f"WS v2 Sent: {payload}")
-        
-        return await asyncio.wait_for(future, timeout=timeout)
+        try:
+            await self._ws_connection.send(json.dumps(payload))  # type: ignore
+            logger.debug(f"WS v2 Sent: {payload}")
+            
+            return await asyncio.wait_for(future, timeout=timeout)
+        except Exception as e:
+            if req_id in self._pending_requests:
+                del self._pending_requests[req_id]
+            raise
 
-    async def _send_subscription_v2(self, subscription: Dict):
+    async def _send_subscription_v2(self, subscription: Dict) -> None:
         """Sends a subscription message to the private WebSocket v2."""
-        if not self._ws_authenticated or not self._ws_connection:
+        if not self.connected():
             raise ConnectionError("WebSocket is not connected. Call connect_v2() first.")
         
         # Add req_id and token
@@ -295,7 +331,7 @@ class KrakenAccount:
             subscription["params"] = {}
         subscription["params"]["token"] = self._auth_token
         
-        await self._ws_connection.send(json.dumps(subscription))
+        await self._ws_connection.send(json.dumps(subscription))  # type: ignore
         logger.debug(f"WS v2 Subscription Sent: {subscription}")
 
     # --- Cancel All Orders After (Dead Man's Switch) Methods ---
@@ -426,7 +462,7 @@ class KrakenAccount:
                 
                 while True:
                     await asyncio.sleep(reset_interval)
-                    if self._ws_authenticated and self._ws_connection:
+                    if self.connected():
                         try:
                             result = await self.set_cancel_all_orders_after(timeout)
                             logger.debug(f"Timer reset successful: {result.get('result', {}).get('triggerTime', 'N/A')}")
@@ -439,25 +475,34 @@ class KrakenAccount:
                 logger.info("Cancel timer auto-reset task cancelled")
                 # Try to disable the timer on cancellation
                 try:
-                    if self._ws_authenticated and self._ws_connection:
+                    if self.connected():
                         await self.set_cancel_all_orders_after(0)
                         logger.info("Disabled cancel timer on task cancellation")
-                except:
+                except Exception:
                     pass
                 raise
             except Exception as e:
                 logger.error(f"Error in cancel timer task: {e}")
         
-        return asyncio.create_task(reset_timer_loop())
+        # Cancel any existing task
+        if self._cancel_timer_task and not self._cancel_timer_task.done():
+            self._cancel_timer_task.cancel()
+            try:
+                await self._cancel_timer_task
+            except asyncio.CancelledError:
+                pass
+        
+        self._cancel_timer_task = asyncio.create_task(reset_timer_loop())
+        return self._cancel_timer_task
 
     # --- Private Data Subscriptions (v2 format) ---
 
     async def subscribe_own_trades(self, 
-                                   snap_trades: bool = True,
-                                   snap_orders: bool = False, 
-                                   consolidate_taker: bool = True,
-                                   ratecounter: bool = False,
-                                   handler: Optional[Callable] = None):
+                                 snap_trades: bool = True,
+                                 snap_orders: bool = False, 
+                                 consolidate_taker: bool = True,
+                                 ratecounter: bool = False,
+                                 handler: Optional[Callable[[Dict], Awaitable[None]]] = None) -> None:
         """
         Subscribe to own trades data stream using v2 format.
         
@@ -487,11 +532,11 @@ class KrakenAccount:
         logger.info(f"Subscribed to executions (snap_trades={snap_trades}, snap_orders={snap_orders}, consolidate_taker={consolidate_taker})")
 
     async def subscribe_open_orders(self, 
-                                    snap_trades: bool = False,
-                                    snap_orders: bool = True,
-                                    consolidate_taker: bool = True,
-                                    ratecounter: bool = False,
-                                    handler: Optional[Callable] = None):
+                                  snap_trades: bool = False,
+                                  snap_orders: bool = True,
+                                  consolidate_taker: bool = True,
+                                  ratecounter: bool = False,
+                                  handler: Optional[Callable[[Dict], Awaitable[None]]] = None) -> None:
         """
         Subscribe to open orders data stream using v2 format.
         Note: This uses the same 'executions' channel but focuses on orders.
@@ -514,7 +559,7 @@ class KrakenAccount:
         self._subscriptions['executions_orders'] = subscription
         logger.info(f"Subscribed to executions for orders (snap_trades={snap_trades}, snap_orders={snap_orders})")
 
-    async def unsubscribe_own_trades(self):
+    async def unsubscribe_own_trades(self) -> None:
         """Unsubscribe from own trades data stream using v2 format."""
         if 'executions' not in self._subscriptions:
             logger.warning("Not subscribed to executions")
@@ -532,7 +577,7 @@ class KrakenAccount:
         self._subscriptions.pop('executions_orders', None)  # Remove both if present
         logger.info("Unsubscribed from executions")
 
-    async def unsubscribe_open_orders(self):
+    async def unsubscribe_open_orders(self) -> None:
         """Unsubscribe from open orders data stream using v2 format."""
         # Same as unsubscribe_own_trades since they use the same channel
         await self.unsubscribe_own_trades()
@@ -731,21 +776,9 @@ class KrakenAccount:
             **kwargs
         )
 
-    async def cancel_order(self, order_id):
-        """
-        Async version of cancel_order that makes the HTTP request
-        """
-        try:
-            # Use aiohttp or similar async HTTP client here
-            async with self.session.post(
-                f"{self.base_url}/cancel_order",
-                json={"txid": order_id},
-                headers=self._get_auth_headers()
-            ) as response:
-                return await response.json()
-        except Exception as e:
-            print(f"Error canceling order {order_id}: {e}")
-            return {"status": "error", "errorMessage": str(e)}
+    async def cancel_order(self, order_id: str) -> Dict:
+        """Cancel an order using v2 API format (legacy method)."""
+        return await self.cancel_order_v2(order_id=order_id)
 
     async def cancel_all_orders(self) -> Dict:
         """Legacy method - cancels all open orders."""
@@ -819,30 +852,46 @@ class KrakenAccount:
         result = await self._make_rest_request(f"/{self.API_VERSION}/private/QueryTrades", data)
         return result['result']
 
-    async def close(self):
+    async def close(self) -> None:
         """Closes the WebSocket connection and cleans up resources."""
-        try:   
-            self.cancel_all_orders()
-        except:
-            pass
-        
-        if self._message_handler_task:
-            self._message_handler_task.cancel()
-            try:
-                await self._message_handler_task
-            except asyncio.CancelledError:
-                pass
-        
-        if self._ws_connection:
-            await self._ws_connection.close()
-            logger.info("WebSocket v2 connection closed.")
-        
-        if self._session and not self._session.closed:
-            await self._session.close()
+        try:
+            # Cancel the timer task if running
+            if self._cancel_timer_task and not self._cancel_timer_task.done():
+                self._cancel_timer_task.cancel()
+                try:
+                    await self._cancel_timer_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Cancel the message handler task
+            if self._message_handler_task and not self._message_handler_task.done():
+                self._message_handler_task.cancel()
+                try:
+                    await self._message_handler_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Close WebSocket connection
+            if self._ws_connection:# and not self._ws_connection.closed:
+                await self._ws_connection.close()
+                logger.info("WebSocket v2 connection closed.")
+            
+            # Close HTTP session
+            if self._session and not self._session.closed:
+                await self._session.close()
+                logger.info("HTTP session closed.")
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+        finally:
+            self._ws_authenticated = False
+            self._auth_token = None
     
-    async def __aenter__(self):
+    async def __aenter__(self) -> 'KrakenAccount':
         await self.connect_v2()
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Optional[type], 
+                        exc_val: Optional[Exception], 
+                        exc_tb: Optional[Any]) -> None:
         await self.close()
