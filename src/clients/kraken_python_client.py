@@ -10,10 +10,12 @@ rust_client -> rust_kraken_client -> kraken_python_client
 For lowest latency, use rust_kraken_client directly
 """
 class KrakenPythonClient:
-    def __init__(self,asset='XBTUSD',error_message=False):
+    def __init__(self, asset='XBTUSD', error_message=False, api_key=None, api_secret=None):
         self.asset = asset
         self.error_message = error_message
         self.base_url = "https://api.kraken.com/0/public"
+        self.api_key = api_key
+        self.api_secret = api_secret
 
     def test_connection(self):
         try:
@@ -34,10 +36,10 @@ class KrakenPythonClient:
             if self.error_message:
                 print(f"KrakenPythonClient.get_bid: {e}")
             return False
-    
+        
     def get_ask(self,asset='XBTUSD',index=0):
         """
-        Get the ask price of an asset.
+        Get the bid price of an asset.
         """
         try:
             return kraken.get_ask(asset)[index]
@@ -45,200 +47,7 @@ class KrakenPythonClient:
             return kraken.get_ask(asset)
         except Exception as e:
             if self.error_message:
-                print(f"KrakenPythonClient.get_ask: {e}")
-            return False
-    
-    def get_balance(self,asset=None):
-        """
-        Get the balance of an asset.
-        If asset is None, returns all balances.
-        """
-        try:
-            if asset == None:
-                # Returns all balances
-                return kraken.get_balance()
-            else:
-                # Returns specific balance
-                return kraken.get_balance()[asset]
-        except Exception as e:
-            if self.error_message:
-                print(f"KrakenPythonClient.get_balance: {e}")
-            return False
-
-    def get_spread(self,asset='XBTUSD'):
-        """
-        Get the spread of an asset.
-        """
-        try:
-            return kraken.get_spread(asset)
-        except Exception as e:
-            if self.error_message:
-                print(f"KrakenPythonClient.get_spread: {e}")
-            return False
-    
-    def add_order(self, asset, side, price, volume):
-        """
-        Add an order to the Kraken API and return a dictionary with parsed fields.
-        """
-        try:
-            order_response = kraken.add_order(asset, side, price, volume)
-            return {
-                "txid": order_response.txid[0] if isinstance(order_response.txid, list) else order_response.txid,
-                "description": order_response.description
-            }
-        except Exception as e:
-            if self.error_message:
-                print(f"KrakenPythonClient.add_order: {e}")
-            return False
-
-    def get_open_orders(self, asset=None, order_type='open', headers=None):
-        """
-        Retrieve open orders with optional asset filtering and column selection.
-        
-        Args:
-            asset (str, optional): Filter orders by asset pair (e.g., 'XBTUSD'). Defaults to None.
-            order_type (str): Type of orders to retrieve ('open'|'closed'|'both'). Defaults to 'open'.
-            headers (list|str, optional): Columns to return. Use '*' for all columns. Defaults to None for basic columns.
-        
-        Returns:
-            pd.DataFrame: DataFrame containing the requested orders
-        """
-        try:
-            # Get and parse orders
-            orders_response = kraken.get_open_orders_raw()
-            orders_data = json.loads(orders_response)
-            orders_dict = orders_data.get('result', {}).get(order_type, {})
-            
-            if not orders_dict:
-                no_orders = pd.DataFrame([{
-                    'order_id': None,
-                    'descr_pair': asset,
-                    'descr_type': 'buy',
-                    'descr_price': 0.0,
-                    'vol': 0.0,
-                    'vol_exec': 0.0
-                }])
-                return no_orders
-
-            # Convert to DataFrame
-            df = (
-                pd.DataFrame.from_dict(orders_dict, orient='index')
-                .reset_index()
-                .rename(columns={'index': 'order_id'})
-            )
-
-            # Expand description fields
-            if 'descr' in df.columns:
-                descr_df = pd.json_normalize(df['descr'])
-                descr_df.columns = [f"descr_{col}" for col in descr_df.columns]
-                df = pd.concat([df.drop('descr', axis=1), descr_df], axis=1)
-
-            # Filter by asset if specified
-            if asset is not None and 'descr_pair' in df.columns:
-                df = df[df['descr_pair'] == asset.upper()]
-
-            # Convert data types
-            numeric_cols = ['vol', 'vol_exec', 'cost', 'fee', 'price', 'stopprice', 'limitprice']
-            for col in numeric_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-
-            time_cols = ['opentm', 'starttm', 'expiretm']
-            for col in time_cols:
-                if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], unit='s', errors='coerce')
-
-            # Select columns to return
-            if headers is None:
-                return df[['order_id', 'descr_pair', 'descr_type', 'descr_price', 'vol', 'vol_exec']]
-            elif headers == '*' or headers == []:
-                return df
-            else:
-                # Validate requested headers exist
-                valid_headers = [h for h in headers if h in df.columns]
-                return df[valid_headers]
-        except Exception as e:
-            if self.error_message:
-                print(f"KrakenPythonClient.get_open_orders: {e}")
-            return False
-
-    def get_recent_trades(self, pair, since=None, count=None):
-        """
-        Get recent trades for a trading pair.
-        
-        Args:
-            pair (str): Trading pair (e.g., 'XBTUSD')
-            since (str, optional): Return trades since this trade ID
-            count (int, optional): Maximum number of trades to return (default: 1000)
-            
-        Returns:
-            dict: Dictionary containing:
-                - 'trades': List of trades, each containing [price, volume, time, buy/sell, market/limit, miscellaneous]
-                - 'last': Trade ID to use for subsequent calls to get newer trades
-            bool: False if the operation fails
-        """
-        try:
-            # Prepare parameters
-            params = {'pair': pair}
-            if since is not None:
-                params['since'] = since
-            if count is not None:
-                params['count'] = count
-            
-            # Make request to Kraken API
-            response = requests.get(f"{self.base_url}/Trades", params=params)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # Check for API errors
-            if data.get('error'):
-                if self.error_message:
-                    print(f"KrakenPythonClient.get_recent_trades: API Error - {data['error']}")
-                return False
-            
-            result = data.get('result', {})
-            
-            # Extract trades data
-            trades_data = None
-            last_id = None
-            
-            for key, value in result.items():
-                if key == 'last':
-                    last_id = value
-                else:
-                    # The trades are stored under the pair name key
-                    trades_data = value
-            
-            if trades_data is None:
-                if self.error_message:
-                    print(f"KrakenPythonClient.get_recent_trades: No trades data found")
-                return False
-            
-            # Convert trades to more readable format
-            formatted_trades = []
-            for trade in trades_data:
-                formatted_trades.append({
-                    'price': float(trade[0]),
-                    'volume': float(trade[1]),
-                    'time': pd.to_datetime(float(trade[2]), unit='s'),
-                    'side': 'buy' if trade[3] == 'b' else 'sell',
-                    'type': 'market' if trade[4] == 'm' else 'limit',
-                    'miscellaneous': trade[5] if len(trade) > 5 else ''
-                })
-            
-            return {
-                'trades': formatted_trades,
-                'last': last_id
-            }
-            
-        except requests.exceptions.RequestException as e:
-            if self.error_message:
-                print(f"KrakenPythonClient.get_recent_trades: Request Error - {e}")
-            return False
-        except Exception as e:
-            if self.error_message:
-                print(f"KrakenPythonClient.get_recent_trades: {e}")
+                print(f"KrakenPythonClient.get_bid: {e}")
             return False
 
     def get_order_id(self):
@@ -285,4 +94,242 @@ class KrakenPythonClient:
         except Exception as e:
             if self.error_message:
                 print(f"KrakenPythonClient.edit_order: {e}")
+            return False
+
+    def get_my_recent_orders(self, pair=None, since=None, count=None, userref=None):
+        """
+        Get recent orders for the authenticated user.
+        
+        Args:
+            pair (str, optional): Trading pair to filter orders (e.g., 'XBTUSD'). If None, returns all pairs.
+            since (str, optional): Return orders since this order ID
+            count (int, optional): Maximum number of orders to return
+            userref (str, optional): User reference ID to filter orders
+            
+        Returns:
+            pd.DataFrame: DataFrame containing order history with columns:
+                - order_id: Order ID (txid)
+                - pair: Trading pair
+                - side: 'buy' or 'sell'
+                - type: Order type (market, limit, etc.)
+                - price: Order price
+                - volume: Order volume
+                - time: Order timestamp (datetime)
+                - status: Order status
+                - cost: Order cost
+                - fee: Order fee
+                - misc: Miscellaneous info
+            bool: False if the operation fails
+        """
+        try:
+            # Get orders from the rust client
+            orders_response = kraken.get_open_orders(pair, since, count, userref)
+            
+            # Parse the response if it's JSON string
+            if isinstance(orders_response, str):
+                orders_data = json.loads(orders_response)
+            else:
+                orders_data = orders_response
+            
+            # Extract orders from the result
+            if hasattr(orders_data, 'result'):
+                result = orders_data.result
+            elif isinstance(orders_data, dict) and 'result' in orders_data:
+                result = orders_data['result']
+            else:
+                result = orders_data
+            
+            # Get the orders dictionary
+            if hasattr(result, 'open'):
+                orders_dict = result.open
+            elif isinstance(result, dict) and 'open' in result:
+                orders_dict = result['open']
+            else:
+                # Assume the result itself is the orders dictionary
+                orders_dict = result
+            
+            if not orders_dict:
+                # Return empty DataFrame with expected columns
+                return pd.DataFrame(columns=[
+                    'order_id', 'pair', 'side', 'type', 'price', 'volume', 'time', 
+                    'status', 'cost', 'fee', 'misc'
+                ])
+            
+            # Convert to DataFrame
+            df = pd.DataFrame.from_dict(orders_dict, orient='index').reset_index()
+            df = df.rename(columns={'index': 'order_id'})
+            
+            # Extract nested order description if it exists
+            if 'descr' in df.columns:
+                descr_df = pd.json_normalize(df['descr'])
+                df = pd.concat([df.drop('descr', axis=1), descr_df], axis=1)
+            
+            # Standardize column names and data types
+            if 'type' in df.columns and 'side' not in df.columns:
+                df['side'] = df['type']
+            
+            # Convert numeric columns
+            numeric_cols = ['price', 'vol', 'cost', 'fee']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Rename volume column if it exists
+            if 'vol' in df.columns:
+                df['volume'] = df['vol']
+            
+            # Convert time to datetime
+            if 'opentm' in df.columns:
+                df['time'] = pd.to_datetime(df['opentm'], unit='s', errors='coerce')
+            elif 'time' in df.columns:
+                df['time'] = pd.to_datetime(df['time'], unit='s', errors='coerce')
+            
+            # Add status column
+            if 'status' not in df.columns:
+                df['status'] = 'open'
+            
+            # Filter by pair if specified
+            if pair is not None and 'pair' in df.columns:
+                df = df[df['pair'] == pair.upper()]
+            
+            # Select and order columns to match expected format
+            expected_cols = ['order_id', 'pair', 'side', 'type', 'price', 'volume', 'time', 'status', 'cost', 'fee', 'misc']
+            available_cols = [col for col in expected_cols if col in df.columns]
+            
+            # Add missing columns with default values
+            for col in expected_cols:
+                if col not in df.columns:
+                    df[col] = None
+            
+            return df[expected_cols]
+            
+        except Exception as e:
+            if self.error_message:
+                print(f"KrakenPythonClient.get_my_recent_orders: {e}")
+            return False
+        
+    def get_my_recent_trades(self, pair=None, since=None, count=None):
+        """
+        Get recent trades history for the authenticated user using Kraken REST API.
+        
+        Args:
+            pair (str, optional): Trading pair to filter trades (e.g., 'XBTUSD'). If None, returns all pairs.
+            since (str, optional): Return trades since this trade ID
+            count (int, optional): Maximum number of trades to return
+            
+        Returns:
+            pd.DataFrame: DataFrame containing trade history with columns:
+                - trade_id: Trade ID
+                - pair: Trading pair
+                - side: 'buy' or 'sell'
+                - price: Trade price
+                - volume: Trade volume
+                - time: Trade timestamp (datetime)
+                - cost: Trade cost
+                - fee: Trade fee
+                - margin: Margin (if applicable)
+                - misc: Miscellaneous info
+            bool: False if the operation fails
+        """
+        try:
+            # This requires API credentials - you'll need to add them to your class
+            if not hasattr(self, 'api_key') or not hasattr(self, 'api_secret'):
+                if self.error_message:
+                    print("KrakenPythonClient.get_my_recent_trades: API credentials required")
+                return False
+            
+            import urllib.parse
+            import hashlib
+            import hmac
+            import base64
+            
+            # Kraken private API endpoint
+            url = "https://api.kraken.com/0/private/TradesHistory"
+            
+            # Build parameters
+            data = {
+                'nonce': str(int(time.time() * 1000))
+            }
+            
+            if pair:
+                data['pair'] = pair
+            if since:
+                data['start'] = since
+            if count:
+                data['count'] = count
+            
+            # Create signature for authentication
+            postdata = urllib.parse.urlencode(data)
+            encoded = (str(data['nonce']) + postdata).encode()
+            message = '/0/private/TradesHistory'.encode() + hashlib.sha256(encoded).digest()
+            
+            mac = hmac.new(base64.b64decode(self.api_secret), message, hashlib.sha512)
+            sigdigest = base64.b64encode(mac.digest())
+            
+            headers = {
+                'API-Key': self.api_key,
+                'API-Sign': sigdigest.decode()
+            }
+            
+            # Make the request
+            response = requests.post(url, headers=headers, data=data)
+            response.raise_for_status()
+            
+            trades_data = response.json()
+            
+            if trades_data.get('error'):
+                if self.error_message:
+                    print(f"KrakenPythonClient.get_my_recent_trades: API Error: {trades_data['error']}")
+                return False
+            
+            # Extract trades from the result
+            result = trades_data.get('result', {})
+            trades_dict = result.get('trades', {})
+            
+            if not trades_dict:
+                # Return empty DataFrame with expected columns
+                return pd.DataFrame(columns=[
+                    'trade_id', 'pair', 'side', 'price', 'volume', 'time', 
+                    'cost', 'fee', 'margin', 'misc'
+                ])
+            
+            # Convert to DataFrame
+            df = pd.DataFrame.from_dict(trades_dict, orient='index').reset_index()
+            df = df.rename(columns={'index': 'trade_id'})
+            
+            # Standardize column names and data types
+            if 'type' in df.columns:
+                df['side'] = df['type']
+            
+            # Convert numeric columns
+            numeric_cols = ['price', 'vol', 'cost', 'fee', 'margin']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Rename volume column if it exists
+            if 'vol' in df.columns:
+                df['volume'] = df['vol']
+            
+            # Convert time to datetime
+            if 'time' in df.columns:
+                df['time'] = pd.to_datetime(df['time'], unit='s', errors='coerce')
+            
+            # Filter by pair if specified (additional filtering after API call)
+            if pair is not None and 'pair' in df.columns:
+                df = df[df['pair'] == pair.upper()]
+            
+            # Select and order columns to match expected format
+            expected_cols = ['trade_id', 'pair', 'side', 'price', 'volume', 'time', 'cost', 'fee', 'margin', 'misc']
+            
+            # Add missing columns with default values
+            for col in expected_cols:
+                if col not in df.columns:
+                    df[col] = None
+            
+            return df[expected_cols]
+            
+        except Exception as e:
+            if self.error_message:
+                print(f"KrakenPythonClient.get_my_recent_trades: {e}")
             return False
