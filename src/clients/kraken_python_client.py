@@ -333,3 +333,85 @@ class KrakenPythonClient:
             if self.error_message:
                 print(f"KrakenPythonClient.get_my_recent_trades: {e}")
             return False
+
+    def cancel_all_orders(self, asset=None):
+        """
+        Cancel all open orders for a specific asset or all assets.
+        
+        Args:
+            asset (str, optional): Trading pair to cancel orders for (e.g., 'XBTUSD'). 
+                                If None, cancels all orders for all assets.
+        
+        Returns:
+            dict: Dictionary containing:
+                - success: List of successfully cancelled order IDs
+                - failed: List of failed order IDs with error messages
+                - total_cancelled: Number of successfully cancelled orders
+                - total_failed: Number of failed cancellations
+            bool: False if unable to get open orders
+        """
+        try:
+            # Get all open orders for the specified asset
+            orders_df = self.get_my_recent_orders(pair=asset)
+            
+            if orders_df is False:
+                if self.error_message:
+                    print("KrakenPythonClient.cancel_all_orders: Failed to get open orders")
+                return False
+            
+            if orders_df.empty:
+                if self.error_message:
+                    print(f"KrakenPythonClient.cancel_all_orders: No open orders found for {asset or 'any asset'}")
+                return {
+                    'success': [],
+                    'failed': [],
+                    'total_cancelled': 0,
+                    'total_failed': 0
+                }
+            
+            # Initialize result tracking
+            successful_cancellations = []
+            failed_cancellations = []
+            
+            # Cancel each order
+            for _, order in orders_df.iterrows():
+                order_id = order['order_id']
+                try:
+                    cancel_result = self.cancel_order(order_id)
+                    
+                    if cancel_result is not False:
+                        successful_cancellations.append(order_id)
+                        if self.error_message:
+                            print(f"Successfully cancelled order: {order_id}")
+                    else:
+                        failed_cancellations.append({
+                            'order_id': order_id,
+                            'error': 'Cancel operation returned False'
+                        })
+                        if self.error_message:
+                            print(f"Failed to cancel order: {order_id}")
+                            
+                except Exception as e:
+                    failed_cancellations.append({
+                        'order_id': order_id,
+                        'error': str(e)
+                    })
+                    if self.error_message:
+                        print(f"Exception while cancelling order {order_id}: {e}")
+            
+            result = {
+                'success': successful_cancellations,
+                'failed': failed_cancellations,
+                'total_cancelled': len(successful_cancellations),
+                'total_failed': len(failed_cancellations)
+            }
+            
+            if self.error_message:
+                print(f"Cancel all orders completed. Cancelled: {result['total_cancelled']}, Failed: {result['total_failed']}")
+            
+            return result
+            
+        except Exception as e:
+            if self.error_message:
+                print(f"KrakenPythonClient.cancel_all_orders: {e}")
+            return False
